@@ -4,11 +4,12 @@ import { CatalogPage } from "./pages/CatalogPage";
 import { DagPage } from "./pages/DagPage";
 import { ProcessesPage } from "./pages/ProcessesPage";
 import { ReplaysPage } from "./pages/ReplaysPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { RunsPage } from "./pages/RunsPage";
 import { useDagStore } from "./store/dagStore";
 import { useProcessStore } from "./store/processStore";
 
-type Page = "processes" | "runs" | "catalog" | "dag" | "replays";
+type Page = "processes" | "runs" | "catalog" | "dag" | "replays" | "reports";
 
 const navBtn = (active: boolean): CSSProperties => ({
   padding: "6px 12px",
@@ -24,6 +25,7 @@ export default function App() {
   const [page, setPage] = useState<Page>("processes");
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [processSlug, setProcessSlug] = useState("");
+  const [templateId, setTemplateId] = useState<string | null>(null);
 
   const patchStep = useDagStore((s) => s.patchStep);
   const resetRun = useDagStore((s) => s.resetRun);
@@ -66,6 +68,16 @@ export default function App() {
     setProcessSlug(slug);
     setPage("runs");
   };
+  const openReports = (id: string, slug: string, tplId?: string) => {
+    setWorkflowId(id);
+    setProcessSlug(slug);
+    setTemplateId(tplId ?? null);
+    setPage("reports");
+  };
+  const openReportsFromCatalog = (tplId: string) => {
+    setTemplateId(tplId);
+    setPage("reports");
+  };
 
   return (
     <div
@@ -90,7 +102,7 @@ export default function App() {
           Navbe
         </div>
         <p style={{ margin: "4px 0 12px", color: "#64748b", fontSize: 14 }}>
-          Control cockpit — processes, runs, catalog, DAG, and replays
+          Control cockpit — processes, runs, catalog, reports, DAG, and replays
         </p>
         <nav style={{ display: "flex", gap: 8 }}>
           <button
@@ -117,6 +129,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            style={navBtn(page === "reports")}
+            onClick={() => setPage("reports")}
+          >
+            Reports
+          </button>
+          <button
+            type="button"
             style={navBtn(page === "dag")}
             onClick={() => setPage("dag")}
             disabled={!workflowId}
@@ -137,12 +156,21 @@ export default function App() {
         style={{ padding: "1.5rem 2rem", maxWidth: 1100, margin: "0 auto" }}
       >
         {page === "processes" && (
-          <ProcessesPage onOpenDag={openDag} onOpenRuns={openRuns} />
+          <ProcessesPage
+            onOpenDag={openDag}
+            onOpenRuns={openRuns}
+            onOpenReports={openReports}
+          />
         )}
         {page === "runs" && workflowId && (
           <RunsPage workflowId={workflowId} processSlug={processSlug} />
         )}
-        {page === "catalog" && <CatalogPage />}
+        {page === "catalog" && (
+          <CatalogPage onOpenReports={openReportsFromCatalog} />
+        )}
+        {page === "reports" && (
+          <ReportsPage workflowId={workflowId} initialTemplateId={templateId} />
+        )}
         {page === "dag" && workflowId && (
           <DagPage workflowId={workflowId} processSlug={processSlug} />
         )}

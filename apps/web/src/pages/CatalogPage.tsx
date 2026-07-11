@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { type CatalogResponse, fetchCatalog } from "../api/client";
 
-export function CatalogPage() {
+type Props = {
+  onOpenReports: (templateId: string) => void;
+};
+
+export function CatalogPage({ onOpenReports }: Props) {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +62,14 @@ export function CatalogPage() {
                 <ul>
                   {d.templates.map((t) => (
                     <li key={t.id}>
-                      Template: {t.name} — {t.description}
+                      Template: {t.name} — {t.description}{" "}
+                      <button
+                        type="button"
+                        onClick={() => onOpenReports(t.id)}
+                        style={{ fontSize: 12 }}
+                      >
+                        Open in Reports
+                      </button>
                     </li>
                   ))}
                 </ul>

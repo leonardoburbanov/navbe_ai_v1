@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -9,6 +10,7 @@ from typing import Any
 
 import duckdb
 from navbe_connectors.langfuse import fetch_last_traces
+from navbe_core.config import DATA_DIR
 from navbe_destinations.duckdb import ensure_schema, write_observations, write_traces
 from navbe_transforms.tags import MART_REFRESH_SQL
 
@@ -101,9 +103,9 @@ def refresh_retailer_mart(state: dict) -> dict:
     """Rebuild mart_retailer_token_cost_daily from traces tags."""
     if state.get("dest_type") != "duckdb":
         return {"mart_refreshed": False, "reason": "duckdb only"}
-    db_path = state["dest_config"].get("db_path")
-    if not db_path:
-        return {"mart_refreshed": False, "reason": "no db_path"}
+    dest_config = state.get("dest_config") or {}
+    # Same default as write_traces / query_destination when config omits db_path.
+    db_path = dest_config.get("db_path") or os.path.join(str(DATA_DIR), "langfuse.duckdb")
     con = duckdb.connect(db_path)
     try:
         ensure_schema(con)

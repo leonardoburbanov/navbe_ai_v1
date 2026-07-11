@@ -6,9 +6,10 @@ import { useProcessStore } from "../store/processStore";
 type Props = {
   onOpenDag: (workflowId: string, slug: string) => void;
   onOpenRuns: (workflowId: string, slug: string) => void;
+  onOpenReports: (workflowId: string, slug: string) => void;
 };
 
-export function ProcessesPage({ onOpenDag, onOpenRuns }: Props) {
+export function ProcessesPage({ onOpenDag, onOpenRuns, onOpenReports }: Props) {
   const processes = useProcessStore((s) => s.processes);
   const setProcesses = useProcessStore((s) => s.setProcesses);
 
@@ -70,6 +71,12 @@ export function ProcessesPage({ onOpenDag, onOpenRuns }: Props) {
                     onClick={() => onOpenRuns(p.workflow_id, p.process_slug)}
                   >
                     Runs
+                  </button>{" "}
+                  <button
+                    type="button"
+                    onClick={() => onOpenReports(p.workflow_id, p.process_slug)}
+                  >
+                    Results
                   </button>
                 </td>
               </tr>

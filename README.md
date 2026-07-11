@@ -72,17 +72,24 @@ Profile data lives under `~/.navbe` (or `%USERPROFILE%\.navbe` on Windows). Over
 ## Connect Cursor (MCP)
 
 1. Start the daemon (`uv run navbe daemon`).
-2. In Cursor MCP settings, add a server pointing at:
+2. Add Navbe to Cursor MCP config (`~/.cursor/mcp.json` on macOS/Linux, `%USERPROFILE%\.cursor\mcp.json` on Windows):
 
-   ```text
-   http://127.0.0.1:7700/mcp
+   ```json
+   {
+     "mcpServers": {
+       "navbe": {
+         "url": "http://127.0.0.1:7700/mcp/",
+         "headers": {}
+       }
+     }
+   }
    ```
 
-   Use **streamable HTTP** transport (not stdio).
+   Use **streamable HTTP** (URL), not stdio. Reload MCP / restart the agent so tools appear.
 
-3. Confirm tools appear (e.g. `list_connectors`, `create_langfuse_export_workflow`, `get_process_status`).
+3. In a Cursor chat, confirm the agent can see Navbe tools (e.g. `list_connectors`, `create_langfuse_export_workflow`, `get_process_status`).
 
-Any number of agents can attach to the same daemon. Subscribe with a stable `subscriber_id` (`cursor`, `claude`, …) and poll with `pull_events`, or ask `get_process_status("langfuse_daily")`.
+Any number of agents can attach to the same daemon. Status is shared — ask from any session how `langfuse_daily` is doing.
 
 ---
 
@@ -107,38 +114,68 @@ Open [http://localhost:5173](http://localhost:5173). Vite proxies `/api` and `/e
 
 ---
 
-## First workflow (Langfuse → DuckDB)
+## Run the MVPs from a Cursor agent
 
-From an MCP-connected agent (or by calling the same tools yourself):
+You do **not** need to call tools by hand. Open a Cursor Agent chat with Navbe MCP enabled and speak in natural language. The agent should use Navbe MCP tools under the hood.
 
-1. **`create_connector`** — Langfuse host + public/secret keys  
-2. **`create_destination`** — `type: "duckdb"` (path defaults under the profile data dir)  
-3. **`create_langfuse_export_workflow`** — wires connector → destination; default `process_slug` is `langfuse_daily`  
-4. **`preview_workflow`** (optional) — sample run; does not advance watermarks  
-5. **`run_workflow`** — production incremental sync + retailer mart refresh  
-6. **`list_analysis_templates`** / **`query_destination`** — e.g. tokens & cost per `retailer:[id]` tag  
+### Prerequisites
 
-Check shared status from any agent:
+- Daemon running on `7700`
+- Navbe entry in `mcp.json` (above)
+- Langfuse host + public/secret keys ready to paste when the agent asks
 
-```text
-get_process_status("langfuse_daily")
-subscribe(subscriber_id="cursor") → pull_events(...)
+### MVP A — Monitor Langfuse → local DuckDB
+
+Paste prompts like these (adapt credentials and schedule):
+
+**1. Connect and sync**
+
+> Using Navbe MCP, connect to my Langfuse at `https://<host>` with public key `pk-lf-...` and secret key `sk-lf-...`. Create a DuckDB destination, then schedule a daily incremental export as process `langfuse_daily`. Preview first, then run it for real.
+
+**2. Check progress (any agent / session)**
+
+> How is the Langfuse process going? Subscribe as `cursor` and pull events. Call `get_process_status("langfuse_daily")`.
+
+**3. Analytics**
+
+> Using Navbe, list analysis templates for my DuckDB destination, then query tokens and cost per retailer per day from `mart_retailer_token_cost_daily`.
+
+> How many traces do we have today, per hour?
+
+Example SQL the agent may run via `query_destination` / `query_workflow_destination`:
+
+```sql
+SELECT strftime(CAST(timestamp AS TIMESTAMP), '%H') AS hour, count(*) AS traces
+FROM traces
+WHERE CAST(timestamp AS TIMESTAMP) >= current_date
+GROUP BY hour
+ORDER BY hour
 ```
 
-### Trace replay (MVP B)
+**What the agent should do under the hood**
 
-```text
-replay_trace_to_api(
-  trace_id=...,
-  connection_id=...,
-  api_url=...,
-  auth={ "type": "bearer", "token": "..." },
-  destination_id=...,      # optional: persist to replay_results
-  save_as_workflow=true    # optional: reusable process replay_<id>
-)
-```
+1. `create_connector` → optional `query_langfuse` sanity check  
+2. `create_destination(type="duckdb")`  
+3. `create_langfuse_export_workflow` (`process_slug` defaults to `langfuse_daily`)  
+4. Optional `preview_workflow`, then `run_workflow`  
+5. `subscribe` / `pull_events` / `get_process_status`  
+6. `list_analysis_templates` + `query_destination` on the mart  
 
-Results appear on the **Replays** page and via `GET /api/replays`.
+Watch the same run live in the Control UI (Processes + DAG).
+
+### MVP B — Replay a trace against your API
+
+> Using Navbe MCP, replay Langfuse trace `<trace_id>` from my existing connector against `https://api.example.com/v1/...` with bearer auth. Store results in my DuckDB destination, return the structured diff, and save it as a reusable workflow.
+
+The agent should call `replay_trace_to_api` (with `destination_id` and `save_as_workflow` as needed). Open **Replays** in the Control UI to inspect original output vs API response.
+
+### Multi-agent tip
+
+Start the sync in Cursor, then in Claude or Hermes ask:
+
+> How is `langfuse_daily` doing?
+
+Both read the same hub — same watermark, same events, same process status.
 
 ---
 

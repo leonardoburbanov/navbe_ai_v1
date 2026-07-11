@@ -37,6 +37,14 @@ export type FlowEdge = {
   animated?: boolean;
 };
 
+export type AnalysisTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  query_example: string;
+  min_schema_version?: number;
+};
+
 export type CatalogResponse = {
   connectors: Array<{
     id: string;
@@ -50,10 +58,18 @@ export type CatalogResponse = {
     type: string;
     name: string;
     schema_version: number | null;
-    templates: Array<{ id: string; name: string; description: string }>;
+    templates: AnalysisTemplate[];
   }>;
   connector_types: string[];
   destination_types: string[];
+};
+
+export type QueryResult = {
+  columns: string[];
+  rows: unknown[][];
+  page: number;
+  page_size: number;
+  total: number;
 };
 
 export type ReplayRow = {
@@ -75,6 +91,19 @@ export type ReplayRow = {
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`${res.status} ${path}: ${detail}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`${res.status} ${path}: ${detail}`);
@@ -109,4 +138,18 @@ export function fetchReplays(
 ): Promise<{ replays: ReplayRow[] }> {
   const q = workflowId ? `?workflow_id=${encodeURIComponent(workflowId)}` : "";
   return getJson(`/api/replays${q}`);
+}
+
+/** Run a read-only SELECT against a workflow's destination (paginated). */
+export function queryWorkflowDestination(
+  workflowId: string,
+  sql: string,
+  page = 1,
+  pageSize = 20,
+): Promise<QueryResult> {
+  return postJson(`/api/workflows/${workflowId}/query`, {
+    sql,
+    page,
+    page_size: pageSize,
+  });
 }
