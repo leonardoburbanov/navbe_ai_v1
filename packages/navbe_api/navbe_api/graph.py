@@ -8,8 +8,12 @@ import re
 # Step name → React Flow custom node type
 _STEP_NODE_TYPES: dict[str, str] = {
     "fetch_traces": "connector",
+    "fetch_trace": "connector",
     "write_traces": "destination",
+    "store_replay": "destination",
     "refresh_retailer_mart": "transform",
+    "compare_outputs": "transform",
+    "call_api": "control",
 }
 
 

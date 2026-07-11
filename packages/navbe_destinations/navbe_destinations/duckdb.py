@@ -94,6 +94,22 @@ CREATE TABLE IF NOT EXISTS mart_retailer_token_cost_daily (
 )
 """
 
+_REPLAY_RESULTS_DDL = """
+CREATE TABLE IF NOT EXISTS replay_results (
+    id VARCHAR PRIMARY KEY,
+    trace_id VARCHAR NOT NULL,
+    api_url VARCHAR NOT NULL,
+    request_body JSON,
+    response_body JSON,
+    status_code INTEGER,
+    latency_ms DOUBLE,
+    original_output JSON,
+    diff_summary JSON,
+    ts VARCHAR NOT NULL,
+    extras JSON
+)
+"""
+
 # Additive columns for DBs created before schema v1.
 _TRACE_ADD_COLUMNS = [
     ("user_id", "VARCHAR"),
@@ -119,10 +135,58 @@ def ensure_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(_TRACES_DDL)
     con.execute(_OBSERVATIONS_DDL)
     con.execute(_MART_DDL)
+    con.execute(_REPLAY_RESULTS_DDL)
     for col, typ in _TRACE_ADD_COLUMNS:
         con.execute(f"ALTER TABLE traces ADD COLUMN IF NOT EXISTS {col} {typ}")
     for col, typ in _OBS_ADD_COLUMNS:
         con.execute(f"ALTER TABLE observations ADD COLUMN IF NOT EXISTS {col} {typ}")
+
+
+def list_replay_results(db_path: str, limit: int = 50) -> list[dict]:
+    """Return recent replay_results rows from a DuckDB file."""
+    import json as _json
+
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+        if "replay_results" not in tables:
+            return []
+        rows = con.execute(
+            """
+            SELECT id, trace_id, api_url, request_body, response_body, status_code,
+                   latency_ms, original_output, diff_summary, ts
+            FROM replay_results
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+    finally:
+        con.close()
+
+    def _parse(v: object) -> object:
+        if isinstance(v, str):
+            try:
+                return _json.loads(v)
+            except _json.JSONDecodeError:
+                return v
+        return v
+
+    return [
+        {
+            "id": r[0],
+            "trace_id": r[1],
+            "api_url": r[2],
+            "request_body": _parse(r[3]),
+            "response_body": _parse(r[4]),
+            "status_code": r[5],
+            "latency_ms": r[6],
+            "original_output": _parse(r[7]),
+            "compare": _parse(r[8]),
+            "ts": r[9],
+        }
+        for r in rows
+    ]
 
 
 def flatten_observations(traces: list[dict]) -> list[dict]:

@@ -29,7 +29,7 @@ from navbe_core.models import (
     init_db,
 )
 from navbe_core.repository import WorkflowRepository
-from navbe_destinations.duckdb import DESTINATION_TYPES
+from navbe_destinations.duckdb import DESTINATION_TYPES, list_replay_results
 from navbe_mcp.registry import dispatch
 from navbe_mcp.tools.list_analysis_templates import RETAILER_TEMPLATE
 from navbe_notify import bus as events
@@ -239,6 +239,34 @@ def list_processes() -> dict:
 def list_analysis_templates(destination_id: str) -> dict:
     """List analysis templates affordable for a destination."""
     return _run_tool("list_analysis_templates", destination_id=destination_id)
+
+
+@mcp.tool
+def replay_trace_to_api(
+    trace_id: str,
+    connection_id: str,
+    api_url: str,
+    auth: dict,
+    method: str = "POST",
+    input_mapping: dict | None = None,
+    destination_id: str | None = None,
+    save_as_workflow: bool = False,
+) -> dict:
+    """Replay a Langfuse trace against an API and return a structured diff."""
+    try:
+        return _run_tool(
+            "replay_trace_to_api",
+            trace_id=trace_id,
+            connection_id=connection_id,
+            api_url=api_url,
+            auth=auth,
+            method=method,
+            input_mapping=input_mapping,
+            destination_id=destination_id,
+            save_as_workflow=save_as_workflow,
+        )
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @mcp.tool
@@ -456,9 +484,45 @@ def _register_routes(app: FastAPI) -> None:
         return workflow_to_flow_graph(workflow.context)
 
     @app.get("/api/replays")
-    def api_replays() -> dict:
-        """Stub until Sprint 4 (trace replay)."""
-        raise HTTPException(status_code=404, detail="Replays arrive in Sprint 4")
+    def api_replays(
+        workflow_id: str | None = None,
+        destination_id: str | None = None,
+        db: Session = Depends(get_db),
+    ) -> dict:
+        """List replay_results from DuckDB destinations (Control UI)."""
+        repo = WorkflowRepository(db)
+        dest_ids: list[str] = []
+
+        if destination_id:
+            dest_ids = [destination_id]
+        elif workflow_id:
+            workflow = repo.get_workflow(workflow_id, DEMO_USER_ID)
+            if workflow is None:
+                raise HTTPException(status_code=404, detail="Workflow not found")
+            ctx = json.loads(workflow.context)
+            did = (ctx.get("input") or {}).get("destination_id")
+            if did:
+                dest_ids = [did]
+        else:
+            dest_ids = [d.id for d in repo.list_destinations(DEMO_USER_ID) if d.type == "duckdb"]
+
+        rows: list[dict] = []
+        for did in dest_ids:
+            dest = repo.get_destination(did, DEMO_USER_ID)
+            if dest is None or dest.type != "duckdb":
+                continue
+            config = json.loads(dest.config)
+            db_path = config.get("db_path")
+            if not db_path:
+                continue
+            try:
+                for row in list_replay_results(db_path):
+                    rows.append({**row, "destination_id": did})
+            except Exception:
+                continue
+
+        rows.sort(key=lambda r: r.get("ts") or "", reverse=True)
+        return {"replays": rows}
 
     class QueryWorkflowRequest(BaseModel):
         sql: str

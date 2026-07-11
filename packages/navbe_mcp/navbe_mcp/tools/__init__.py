@@ -11,6 +11,7 @@ from navbe_mcp.tools import preview_workflow as preview_workflow
 from navbe_mcp.tools import pull_events as pull_events
 from navbe_mcp.tools import query as query
 from navbe_mcp.tools import recall as recall
+from navbe_mcp.tools import replay as replay
 from navbe_mcp.tools import run as run
 from navbe_mcp.tools import runs as runs
 from navbe_mcp.tools import schedule as schedule
@@ -29,6 +30,7 @@ __all__ = [
     "pull_events",
     "query",
     "recall",
+    "replay",
     "run",
     "runs",
     "schedule",

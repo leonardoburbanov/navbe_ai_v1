@@ -56,6 +56,23 @@ export type CatalogResponse = {
   destination_types: string[];
 };
 
+export type ReplayRow = {
+  id: string;
+  trace_id: string;
+  api_url: string;
+  status_code: number;
+  latency_ms: number;
+  original_output: unknown;
+  response_body: unknown;
+  compare: {
+    identical?: boolean;
+    diff_count?: number;
+    diffs?: Array<{ path: string; expected: unknown; actual: unknown }>;
+  } | null;
+  ts: string;
+  destination_id?: string;
+};
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) {
@@ -85,4 +102,11 @@ export function fetchGraph(
   workflowId: string,
 ): Promise<{ nodes: FlowNode[]; edges: FlowEdge[] }> {
   return getJson(`/api/workflows/${workflowId}/graph`);
+}
+
+export function fetchReplays(
+  workflowId?: string,
+): Promise<{ replays: ReplayRow[] }> {
+  const q = workflowId ? `?workflow_id=${encodeURIComponent(workflowId)}` : "";
+  return getJson(`/api/replays${q}`);
 }

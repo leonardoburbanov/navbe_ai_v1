@@ -111,3 +111,166 @@ def refresh_retailer_mart(state: dict) -> dict:
     finally:
         con.close()
     return {"mart_refreshed": True}
+
+
+def _diff(expected: object, actual: object, path: str) -> list[dict]:
+    """Recursive JSON diff. Returns list of {path, expected, actual, match}."""
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        out: list[dict] = []
+        for k in expected.keys() | actual.keys():
+            out.extend(_diff(expected.get(k), actual.get(k), f"{path}.{k}"))
+        return out
+    if isinstance(expected, list) and isinstance(actual, list):
+        out = []
+        for i, (e, a) in enumerate(zip(expected, actual, strict=False)):
+            out.extend(_diff(e, a, f"{path}[{i}]"))
+        if len(expected) != len(actual):
+            out.append(
+                {
+                    "path": f"{path}.length",
+                    "expected": len(expected),
+                    "actual": len(actual),
+                    "match": False,
+                }
+            )
+        return out
+    if expected == actual:
+        return []
+    return [{"path": path, "expected": expected, "actual": actual, "match": False}]
+
+
+def _decrypt_auth(auth_cfg: dict) -> dict:
+    """Decrypt Fernet-wrapped token/password when saved in a workflow."""
+    if not auth_cfg.get("_encrypted"):
+        return auth_cfg
+    from navbe_core.secrets import decrypt
+
+    out = dict(auth_cfg)
+    if out.get("token"):
+        out["token"] = decrypt(out["token"])
+    if out.get("password"):
+        out["password"] = decrypt(out["password"])
+    out.pop("_encrypted", None)
+    return out
+
+
+@step("fetch_trace", retries=2)
+def fetch_trace(state: dict) -> dict:
+    """Fetch a single Langfuse trace by ID including input/output."""
+    import httpx
+
+    response = httpx.get(
+        f"{state['host'].rstrip('/')}/api/public/traces/{state['trace_id']}",
+        auth=(state["public_key"], state["secret_key"]),
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return {
+        "trace_input": data.get("input"),
+        "trace_output": data.get("output"),
+        "trace_metadata": data.get("metadata") or {},
+    }
+
+
+@step("call_api", retries=1)
+def call_api(state: dict) -> dict:
+    """Call the target API with mapped body and auth."""
+    import time as _time
+
+    import httpx
+
+    auth_cfg = _decrypt_auth(dict(state.get("auth") or {"type": "none"}))
+    mapping = state.get("input_mapping") or {}
+    body = dict(state.get("trace_input") or {})
+    for src, dst in mapping.items():
+        if src in body:
+            body[dst] = body.pop(src)
+
+    headers: dict[str, str] = {}
+    auth = None
+    auth_type = auth_cfg.get("type", "none")
+    if auth_type == "bearer":
+        headers["Authorization"] = f"Bearer {auth_cfg.get('token')}"
+    elif auth_type == "api_key":
+        headers[auth_cfg.get("header") or "Authorization"] = str(auth_cfg.get("token") or "")
+    elif auth_type == "basic":
+        auth = (auth_cfg.get("username") or "", auth_cfg.get("password") or "")
+
+    method = state.get("method", "POST")
+    kwargs: dict[str, Any] = {"headers": headers, "auth": auth, "timeout": 60.0}
+    if method != "GET":
+        kwargs["json"] = body
+
+    t0 = _time.perf_counter()
+    response = httpx.request(method, state["api_url"], **kwargs)
+    latency_ms = (_time.perf_counter() - t0) * 1000
+
+    try:
+        response_body: object = response.json()
+    except Exception:
+        response_body = {"_raw": response.text}
+
+    return {
+        "api_status_code": response.status_code,
+        "api_response": response_body,
+        "api_latency_ms": latency_ms,
+        "api_request_body": body,
+    }
+
+
+@step("compare_outputs")
+def compare_outputs(state: dict) -> dict:
+    """Structured JSON diff: trace output vs API response."""
+    original = state.get("trace_output") or {}
+    actual = state.get("api_response") or {}
+    diffs = _diff(original, actual, "$")
+    return {
+        "compare_result": {
+            "identical": len(diffs) == 0,
+            "diff_count": len(diffs),
+            "diffs": diffs,
+        }
+    }
+
+
+@step("store_replay")
+def store_replay(state: dict) -> dict:
+    """Persist replay result into DuckDB replay_results when a destination is set."""
+    import json as _json
+    import uuid
+    from datetime import UTC, datetime
+
+    dest_config = state.get("dest_config")
+    if not dest_config or not dest_config.get("db_path"):
+        return {"replay_id": ""}
+
+    db_path = dest_config["db_path"]
+    replay_id = str(uuid.uuid4())
+    con = duckdb.connect(db_path)
+    try:
+        ensure_schema(con)
+        con.execute(
+            """
+            INSERT INTO replay_results
+                (id, trace_id, api_url, request_body, response_body, status_code,
+                 latency_ms, original_output, diff_summary, ts, extras)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                replay_id,
+                state["trace_id"],
+                state["api_url"],
+                _json.dumps(state.get("api_request_body")),
+                _json.dumps(state.get("api_response")),
+                state.get("api_status_code"),
+                state.get("api_latency_ms"),
+                _json.dumps(state.get("trace_output")),
+                _json.dumps(state.get("compare_result")),
+                datetime.now(UTC).isoformat(),
+                None,
+            ],
+        )
+    finally:
+        con.close()
+    return {"replay_id": replay_id}

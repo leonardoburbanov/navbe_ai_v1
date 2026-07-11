@@ -312,7 +312,7 @@ class WorkflowAgent:
                         "db_path": str(preview_path),
                     }
             elif workflow.watermark_at is not None:
-                initial["since"] = workflow.watermark_at
+                initial["since"] = workflow.watermark_at.isoformat()
             compiled = build_graph(context["graph"])
             state = {**initial, "workflow_id": workflow.id, "mode": mode}
             for update in compiled.stream(state, stream_mode="updates"):

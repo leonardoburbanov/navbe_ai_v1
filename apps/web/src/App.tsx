@@ -3,11 +3,12 @@ import { handleSsePayload, useSSE } from "./api/sse";
 import { CatalogPage } from "./pages/CatalogPage";
 import { DagPage } from "./pages/DagPage";
 import { ProcessesPage } from "./pages/ProcessesPage";
+import { ReplaysPage } from "./pages/ReplaysPage";
 import { RunsPage } from "./pages/RunsPage";
 import { useDagStore } from "./store/dagStore";
 import { useProcessStore } from "./store/processStore";
 
-type Page = "processes" | "runs" | "catalog" | "dag";
+type Page = "processes" | "runs" | "catalog" | "dag" | "replays";
 
 const navBtn = (active: boolean): CSSProperties => ({
   padding: "6px 12px",
@@ -89,7 +90,7 @@ export default function App() {
           Navbe
         </div>
         <p style={{ margin: "4px 0 12px", color: "#64748b", fontSize: 14 }}>
-          Control cockpit — live processes, runs, catalog, and DAG
+          Control cockpit — processes, runs, catalog, DAG, and replays
         </p>
         <nav style={{ display: "flex", gap: 8 }}>
           <button
@@ -122,6 +123,13 @@ export default function App() {
           >
             DAG
           </button>
+          <button
+            type="button"
+            style={navBtn(page === "replays")}
+            onClick={() => setPage("replays")}
+          >
+            Replays
+          </button>
         </nav>
       </header>
 
@@ -138,6 +146,7 @@ export default function App() {
         {page === "dag" && workflowId && (
           <DagPage workflowId={workflowId} processSlug={processSlug} />
         )}
+        {page === "replays" && <ReplaysPage workflowId={workflowId} />}
       </main>
     </div>
   );
