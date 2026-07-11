@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
@@ -8,5 +8,8 @@ export default defineConfig({
       "/api": "http://127.0.0.1:7700",
       "/events": "http://127.0.0.1:7700",
     },
+  },
+  test: {
+    environment: "node",
   },
 });

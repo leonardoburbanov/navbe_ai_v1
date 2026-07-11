@@ -31,12 +31,14 @@ from navbe_core.models import (
 from navbe_core.repository import WorkflowRepository
 from navbe_destinations.duckdb import DESTINATION_TYPES
 from navbe_mcp.registry import dispatch
+from navbe_mcp.tools.list_analysis_templates import RETAILER_TEMPLATE
 from navbe_notify import bus as events
 from navbe_scheduler.scheduler import APSchedulerAdapter
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from navbe_api.auth import get_current_user
+from navbe_api.graph import workflow_to_flow_graph
 from navbe_api.sse import stream_all_events, stream_workflow_events
 
 DEMO_USER_ID = "demo"
@@ -355,6 +357,108 @@ def _register_routes(app: FastAPI) -> None:
     def api_events_sse():
         """Hub-wide SSE stream for the Control UI (Sprint 0: no auth)."""
         return stream_all_events()
+
+    # -- Control UI (local hub, demo user, no API key) ---------------------
+
+    @app.get("/api/processes")
+    def api_list_processes(db: Session = Depends(get_db)) -> dict:
+        """Named processes with last run / next run / watermark for the cockpit."""
+        repo = WorkflowRepository(db)
+        processes = []
+        for w in repo.list_workflows_with_slug(DEMO_USER_ID):
+            last = repo.get_last_run(w.id)
+            processes.append(
+                {
+                    "process_slug": w.process_slug,
+                    "workflow_id": w.id,
+                    "name": w.name,
+                    "status": w.status,
+                    "scheduled_at": w.scheduled_at.isoformat() if w.scheduled_at else None,
+                    "watermark": w.watermark_at.isoformat() if w.watermark_at else None,
+                    "last_run": (
+                        {
+                            "run_id": last.id,
+                            "status": last.status,
+                            "started_at": last.started_at.isoformat(),
+                            "completed_at": (
+                                last.completed_at.isoformat() if last.completed_at else None
+                            ),
+                        }
+                        if last
+                        else None
+                    ),
+                }
+            )
+        return {"processes": processes}
+
+    @app.get("/api/runs/{workflow_id}")
+    def api_runs(
+        workflow_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        db: Session = Depends(get_db),
+    ) -> dict:
+        """Paginated run history for one workflow (Control UI)."""
+        repo = WorkflowRepository(db)
+        agent = WorkflowAgent(repo, scheduler_adapter)
+        try:
+            return dispatch(
+                "list_workflow_runs",
+                agent=agent,
+                user_id=DEMO_USER_ID,
+                workflow_id=workflow_id,
+                page=page,
+                page_size=page_size,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.get("/api/catalog")
+    def api_catalog(db: Session = Depends(get_db)) -> dict:
+        """Connectors, destinations, and analysis templates for the catalog page."""
+        repo = WorkflowRepository(db)
+        connectors = [
+            {
+                "id": c.id,
+                "type": c.type,
+                "name": c.name,
+                "host": c.host,
+                "status": c.status,
+            }
+            for c in repo.list_connectors(DEMO_USER_ID)
+        ]
+        destinations = []
+        for d in repo.list_destinations(DEMO_USER_ID):
+            templates = [dict(RETAILER_TEMPLATE)] if d.type == "duckdb" else []
+            destinations.append(
+                {
+                    "id": d.id,
+                    "type": d.type,
+                    "name": d.name,
+                    "schema_version": 1 if d.type == "duckdb" else None,
+                    "templates": templates,
+                }
+            )
+        return {
+            "connectors": connectors,
+            "destinations": destinations,
+            "connector_types": ["langfuse"],
+            "destination_types": sorted(DESTINATION_TYPES),
+        }
+
+    @app.get("/api/workflows/{workflow_id}/graph")
+    def api_workflow_graph(workflow_id: str, db: Session = Depends(get_db)) -> dict:
+        """Workflow IR shaped for React Flow (positions filled by dagre on the client)."""
+        repo = WorkflowRepository(db)
+        workflow = repo.get_workflow(workflow_id, DEMO_USER_ID)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        return workflow_to_flow_graph(workflow.context)
+
+    @app.get("/api/replays")
+    def api_replays() -> dict:
+        """Stub until Sprint 4 (trace replay)."""
+        raise HTTPException(status_code=404, detail="Replays arrive in Sprint 4")
 
     class QueryWorkflowRequest(BaseModel):
         sql: str
