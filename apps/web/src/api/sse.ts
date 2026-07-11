@@ -1,13 +1,26 @@
 import { useEffect, useRef } from "react";
 
+type SseOpts = {
+  onError?: () => void;
+  onOpen?: () => void;
+};
+
 /** Subscribe to an SSE endpoint; closes on unmount or url change. */
-export function useSSE(url: string, onEvent: (e: MessageEvent) => void): void {
+export function useSSE(
+  url: string,
+  onEvent: (e: MessageEvent) => void,
+  opts?: SseOpts,
+): void {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
 
   useEffect(() => {
     const es = new EventSource(url);
     es.onmessage = (e) => onEventRef.current(e);
+    es.onerror = () => optsRef.current?.onError?.();
+    es.onopen = () => optsRef.current?.onOpen?.();
     return () => es.close();
   }, [url]);
 }

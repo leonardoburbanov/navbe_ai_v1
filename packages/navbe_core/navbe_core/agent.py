@@ -362,6 +362,19 @@ class WorkflowAgent:
                 state["process_slug"] = workflow.process_slug
             for update in compiled.stream(state, stream_mode="updates"):
                 for step_name, step_state in update.items():
+                    # ponytail: updates stream fires after the node finishes — started
+                    # is best-effort for UI sequencing; true mid-step running needs
+                    # per-step publish inside handlers → astream_events.
+                    events.publish(
+                        f"run.{workflow.id}",
+                        "run.step.started",
+                        {
+                            "step": step_name,
+                            "workflow_id": workflow.id,
+                            "status": "running",
+                            "process_slug": workflow.process_slug,
+                        },
+                    )
                     state = step_state
                     events.publish(
                         f"run.{workflow.id}",

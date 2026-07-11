@@ -288,6 +288,15 @@ def preview_workflow(workflow_id: str) -> dict:
 
 
 @mcp.tool
+def configure_resend(
+    api_key: str,
+    from_addr: str = "onboarding@resend.dev",
+) -> dict:
+    """Configure Resend API for daily HTML email reports (key encrypted at rest)."""
+    return _run_tool("configure_resend", api_key=api_key, from_addr=from_addr)
+
+
+@mcp.tool
 def configure_email(
     host: str,
     username: str,
@@ -296,7 +305,7 @@ def configure_email(
     port: int = 587,
     use_tls: bool = True,
 ) -> dict:
-    """Configure SMTP for daily HTML email reports (password encrypted at rest)."""
+    """Configure SMTP for daily HTML email reports (fallback; prefer configure_resend)."""
     return _run_tool(
         "configure_email",
         host=host,
@@ -532,12 +541,20 @@ def _register_routes(app: FastAPI) -> None:
         destinations = []
         for d in repo.list_destinations(DEMO_USER_ID):
             templates = [dict(RETAILER_TEMPLATE)] if d.type == "duckdb" else []
+            try:
+                cfg = json.loads(d.config) if d.config else {}
+            except json.JSONDecodeError:
+                cfg = {}
             destinations.append(
                 {
                     "id": d.id,
                     "type": d.type,
                     "name": d.name,
                     "schema_version": 1 if d.type == "duckdb" else None,
+                    "config_summary": {
+                        "db_path": cfg.get("db_path"),
+                        "table": cfg.get("table"),
+                    },
                     "templates": templates,
                 }
             )
@@ -547,6 +564,91 @@ def _register_routes(app: FastAPI) -> None:
             "connector_types": ["langfuse"],
             "destination_types": sorted(DESTINATION_TYPES),
         }
+
+    class ResendSettingsRequest(BaseModel):
+        api_key: str
+        from_addr: str = "onboarding@resend.dev"
+
+    class ReportDestinationRequest(BaseModel):
+        destination_id: str
+
+    class ScheduleReportRequest(BaseModel):
+        destination_id: str
+        email_to: str
+        when: str = "0 23 * * *"
+        name: str = "langfuse_daily_report"
+
+    class SendReportRequest(BaseModel):
+        workflow_id: str | None = None
+        destination_id: str | None = None
+        email_to: str | None = None
+
+    @app.get("/api/settings/email")
+    def api_email_status() -> dict:
+        """Redacted email/Resend status for the Control UI Settings page."""
+        from navbe_notify.email_report import email_status_redacted
+
+        return email_status_redacted()
+
+    @app.post("/api/settings/resend")
+    def api_configure_resend(payload: ResendSettingsRequest, db: Session = Depends(get_db)) -> dict:
+        """Save Resend API key (encrypted) via the same MCP tool path."""
+        repo = WorkflowRepository(db)
+        agent = WorkflowAgent(repo, scheduler_adapter)
+        return dispatch(
+            "configure_resend",
+            agent=agent,
+            user_id=DEMO_USER_ID,
+            api_key=payload.api_key,
+            from_addr=payload.from_addr,
+        )
+
+    @app.post("/api/reports/preview")
+    def api_preview_report(payload: ReportDestinationRequest, db: Session = Depends(get_db)) -> dict:
+        """Build retailer HTML report without sending email."""
+        repo = WorkflowRepository(db)
+        agent = WorkflowAgent(repo, scheduler_adapter)
+        try:
+            return dispatch(
+                "preview_daily_report",
+                agent=agent,
+                user_id=DEMO_USER_ID,
+                destination_id=payload.destination_id,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/reports/schedule")
+    def api_schedule_report(payload: ScheduleReportRequest, db: Session = Depends(get_db)) -> dict:
+        """Schedule langfuse_daily_report cron email."""
+        repo = WorkflowRepository(db)
+        agent = WorkflowAgent(repo, scheduler_adapter)
+        return dispatch(
+            "schedule_daily_report",
+            agent=agent,
+            user_id=DEMO_USER_ID,
+            destination_id=payload.destination_id,
+            email_to=payload.email_to,
+            when=payload.when,
+            name=payload.name,
+        )
+
+    @app.post("/api/reports/send")
+    def api_send_report(payload: SendReportRequest, db: Session = Depends(get_db)) -> dict:
+        """Send the daily retailer HTML email now."""
+        repo = WorkflowRepository(db)
+        agent = WorkflowAgent(repo, scheduler_adapter)
+        try:
+            return dispatch(
+                "send_daily_report",
+                agent=agent,
+                user_id=DEMO_USER_ID,
+                workflow_id=payload.workflow_id,
+                destination_id=payload.destination_id,
+                email_to=payload.email_to,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @app.get("/api/workflows/{workflow_id}/graph")
     def api_workflow_graph(workflow_id: str, db: Session = Depends(get_db)) -> dict:

@@ -17,7 +17,10 @@ export function DagPage({ workflowId, processSlug }: Props) {
 
   return (
     <section>
-      <h2 style={{ marginTop: 0 }}>DAG — {processSlug}</h2>
+      <h2 style={{ marginTop: 0 }}>DAG — {processSlug || "unnamed"}</h2>
+      <p style={{ fontSize: 12, color: "#94a3b8", marginTop: -8 }}>
+        {workflowId}
+      </p>
       <div style={{ display: "flex", gap: 0 }}>
         <div style={{ flex: 1 }}>
           <NavbeFlow

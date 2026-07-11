@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fetchProcesses } from "../api/client";
 import { StatusBadge } from "../components/StatusBadge";
 import { useProcessStore } from "../store/processStore";
@@ -12,22 +12,54 @@ type Props = {
 export function ProcessesPage({ onOpenDag, onOpenRuns, onOpenReports }: Props) {
   const processes = useProcessStore((s) => s.processes);
   const setProcesses = useProcessStore((s) => s.setProcesses);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
     fetchProcesses()
       .then((r) => setProcesses(r.processes))
-      .catch(() => setProcesses([]));
+      .catch((e: Error) => {
+        setProcesses([]);
+        setError(e.message);
+      })
+      .finally(() => setLoading(false));
   }, [setProcesses]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   return (
     <section>
       <h2 style={{ marginTop: 0 }}>Processes</h2>
-      {processes.length === 0 ? (
-        <p style={{ color: "#64748b" }}>
-          No named processes yet. Create a Langfuse export via MCP (
-          <code>process_slug=langfuse_daily</code>).
+      {error && (
+        <p style={{ color: "#ef4444" }}>
+          Failed to load processes: {error}{" "}
+          <button type="button" onClick={load}>
+            Retry
+          </button>
         </p>
-      ) : (
+      )}
+      {loading && !error && (
+        <p style={{ color: "#64748b" }}>Loading processes…</p>
+      )}
+      {!loading && !error && processes.length === 0 && (
+        <div style={{ color: "#64748b", fontSize: 14, lineHeight: 1.6 }}>
+          <p>No named processes yet.</p>
+          <p>
+            Create a Langfuse export via MCP with{" "}
+            <code>create_langfuse_export_workflow</code> and{" "}
+            <code>process_slug=langfuse_daily</code>, then refresh.
+          </p>
+          <p>
+            If the daemon is down, start it with{" "}
+            <code>uv run navbe daemon</code> on port 7700.
+          </p>
+        </div>
+      )}
+      {processes.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr

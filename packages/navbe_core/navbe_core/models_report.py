@@ -47,3 +47,10 @@ class SmtpConfig(BaseModel):
     password: str
     from_addr: str
     use_tls: bool = True
+
+
+class ResendConfig(BaseModel):
+    """Resend API settings; api_key is plaintext only in memory."""
+
+    api_key: str
+    from_addr: str = "onboarding@resend.dev"

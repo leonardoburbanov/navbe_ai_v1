@@ -1,4 +1,4 @@
-"""HTML render + SMTP send for the daily retailer report."""
+"""HTML render + email send (Resend primary, SMTP fallback) for daily retailer report."""
 
 from __future__ import annotations
 
@@ -10,11 +10,13 @@ from email.mime.text import MIMEText
 from pathlib import Path
 
 from navbe_core.config import NAVBE_HOME
-from navbe_core.models_report import RetailerReportPayload, SmtpConfig
+from navbe_core.models_report import ResendConfig, RetailerReportPayload, SmtpConfig
 from navbe_core.secrets import decrypt, encrypt
 
-_SMTP_PATH = NAVBE_HOME / "email_smtp.json"
+_EMAIL_PATH = NAVBE_HOME / "email.json"
+_SMTP_PATH = NAVBE_HOME / "email_smtp.json"  # legacy
 _REPORTS_DIR = NAVBE_HOME / "reports"
+_RESEND_URL = "https://api.resend.com/emails"
 
 
 def _fmt_int(n: float | int) -> str:
@@ -156,9 +158,33 @@ def save_report_preview(html: str, report_date: str) -> Path:
     return path
 
 
+def save_resend_config(cfg: ResendConfig) -> None:
+    """Persist Resend config with encrypted API key."""
+    payload = {
+        "provider": "resend",
+        "api_key_enc": encrypt(cfg.api_key),
+        "from_addr": cfg.from_addr,
+    }
+    _EMAIL_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def load_resend_config() -> ResendConfig | None:
+    """Load Resend config from email.json when provider is resend."""
+    if not _EMAIL_PATH.exists():
+        return None
+    raw = json.loads(_EMAIL_PATH.read_text(encoding="utf-8"))
+    if raw.get("provider") != "resend":
+        return None
+    return ResendConfig(
+        api_key=decrypt(raw["api_key_enc"]),
+        from_addr=raw.get("from_addr") or "onboarding@resend.dev",
+    )
+
+
 def save_smtp_config(cfg: SmtpConfig) -> None:
     """Persist SMTP config with encrypted password."""
     payload = {
+        "provider": "smtp",
         "host": cfg.host,
         "port": cfg.port,
         "username": cfg.username,
@@ -166,14 +192,21 @@ def save_smtp_config(cfg: SmtpConfig) -> None:
         "from_addr": cfg.from_addr,
         "use_tls": cfg.use_tls,
     }
+    _EMAIL_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # Keep legacy path in sync for older readers.
     _SMTP_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def load_smtp_config() -> SmtpConfig | None:
     """Load SMTP config; return None if not configured."""
-    if not _SMTP_PATH.exists():
+    path = _EMAIL_PATH if _EMAIL_PATH.exists() else _SMTP_PATH
+    if not path.exists():
         return None
-    raw = json.loads(_SMTP_PATH.read_text(encoding="utf-8"))
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if raw.get("provider") == "resend":
+        return None
+    if "password_enc" not in raw:
+        return None
     return SmtpConfig(
         host=raw["host"],
         port=int(raw.get("port", 587)),
@@ -182,6 +215,72 @@ def load_smtp_config() -> SmtpConfig | None:
         from_addr=raw["from_addr"],
         use_tls=bool(raw.get("use_tls", True)),
     )
+
+
+def email_configured() -> bool:
+    """True when Resend or SMTP credentials are stored."""
+    return load_resend_config() is not None or load_smtp_config() is not None
+
+
+def email_status_redacted() -> dict:
+    """Public email config status without secrets."""
+    if not _EMAIL_PATH.exists() and not _SMTP_PATH.exists():
+        return {"configured": False, "provider": None, "from_addr": None}
+    path = _EMAIL_PATH if _EMAIL_PATH.exists() else _SMTP_PATH
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    provider = raw.get("provider")
+    if provider == "resend" or "api_key_enc" in raw:
+        return {
+            "configured": True,
+            "provider": "resend",
+            "from_addr": raw.get("from_addr"),
+        }
+    if "password_enc" in raw or provider == "smtp":
+        return {
+            "configured": True,
+            "provider": "smtp",
+            "from_addr": raw.get("from_addr"),
+        }
+    return {"configured": False, "provider": None, "from_addr": None}
+
+
+def send_resend_html(
+    to: list[str],
+    subject: str,
+    html: str,
+    cfg: ResendConfig,
+) -> dict:
+    """Send HTML email via Resend HTTP API. Returns API JSON on success."""
+    import httpx
+
+    if not to:
+        raise ValueError("email_to is empty")
+    response = httpx.post(
+        _RESEND_URL,
+        headers={
+            "Authorization": f"Bearer {cfg.api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "from": cfg.from_addr,
+            "to": to,
+            "subject": subject,
+            "html": html,
+        },
+        timeout=30.0,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Resend HTTP {response.status_code}: {response.text}")
+    return response.json()
+
+
+def probe_resend(cfg: ResendConfig) -> str:
+    """Lightweight check that the API key is non-empty and looks like Resend."""
+    if not cfg.api_key.startswith("re_"):
+        return "api_key should start with re_"
+    if not cfg.from_addr:
+        return "from_addr required"
+    return "ok"
 
 
 def send_smtp_html(
@@ -229,3 +328,16 @@ def probe_smtp(cfg: SmtpConfig) -> str:
         return "ok"
     except Exception as e:  # ponytail: surface any SMTP failure as string for MCP
         return str(e)
+
+
+def send_html_email(to: list[str], subject: str, html: str) -> dict:
+    """Send via Resend if configured, else SMTP. Returns {provider, ...}."""
+    resend = load_resend_config()
+    if resend is not None:
+        result = send_resend_html(to, subject, html, resend)
+        return {"provider": "resend", "result": result}
+    smtp = load_smtp_config()
+    if smtp is None:
+        raise RuntimeError("Email not configured — call configure_resend or configure_email")
+    send_smtp_html(to, subject, html, smtp)
+    return {"provider": "smtp"}

@@ -8,13 +8,15 @@ import os
 import duckdb
 from navbe_core.agent import WorkflowAgent
 from navbe_core.config import DATA_DIR
-from navbe_core.models_report import SmtpConfig
+from navbe_core.models_report import ResendConfig, SmtpConfig
 from navbe_notify import bus as events
 from navbe_notify.email_report import (
-    load_smtp_config,
+    email_configured,
+    probe_resend,
     probe_smtp,
     render_retailer_daily_html,
     save_report_preview,
+    save_resend_config,
     save_smtp_config,
 )
 from navbe_transforms.retailer_report import build_retailer_report_payload
@@ -31,6 +33,33 @@ class ConfigureEmailResult(BaseModel):
     next_step: str = "preview_daily_report"
 
 
+def _configure_resend(
+    agent: WorkflowAgent,
+    user_id: str,
+    api_key: str,
+    from_addr: str = "onboarding@resend.dev",
+) -> dict:
+    """Store Resend API key (encrypted) for HTML email reports."""
+    _ = agent, user_id
+    if not api_key:
+        return {
+            "needs_input": {"fields": ["api_key", "from_addr"]},
+            "next_step": "configure_resend with api_key",
+        }
+    cfg = ResendConfig(api_key=api_key, from_addr=from_addr or "onboarding@resend.dev")
+    probe = probe_resend(cfg)
+    if probe != "ok":
+        return {"status": "rejected", "probe": probe, "next_step": "fix api_key / from_addr"}
+    save_resend_config(cfg)
+    return {
+        "status": "saved",
+        "provider": "resend",
+        "from_addr": cfg.from_addr,
+        "probe": probe,
+        "next_step": "preview_daily_report then send_daily_report",
+    }
+
+
 def _configure_email(
     agent: WorkflowAgent,
     user_id: str,
@@ -42,12 +71,13 @@ def _configure_email(
     use_tls: bool = True,
 ) -> dict:
     """Store SMTP settings (password encrypted) and optionally probe login."""
+    _ = agent, user_id
     if not host or not from_addr:
         return {
             "needs_input": {
                 "fields": ["host", "port", "username", "password", "from_addr", "use_tls"],
             },
-            "next_step": "configure_email with SMTP fields",
+            "next_step": "configure_email with SMTP fields (or prefer configure_resend)",
         }
     cfg = SmtpConfig(
         host=host,
@@ -126,12 +156,12 @@ def _schedule_daily_report(
             "needs_input": {"fields": ["email_to"]},
             "next_step": "schedule_daily_report with email_to",
         }
-    if load_smtp_config() is None:
+    if not email_configured():
         return {
             "needs_input": {
-                "fields": ["host", "port", "username", "password", "from_addr"],
+                "fields": ["api_key", "from_addr"],
             },
-            "next_step": "configure_email first",
+            "next_step": "configure_resend first",
         }
     try:
         workflow = agent.create_daily_report_workflow(
@@ -172,8 +202,8 @@ def _send_daily_report(
             "needs_input": {"fields": ["workflow_id or (destination_id + email_to)"]},
             "next_step": "schedule_daily_report then send_daily_report(workflow_id)",
         }
-    if load_smtp_config() is None:
-        return {"needs_input": {"fields": ["SMTP"]}, "next_step": "configure_email"}
+    if not email_configured():
+        return {"needs_input": {"fields": ["api_key"]}, "next_step": "configure_resend"}
 
     workflow = agent.create_daily_report_workflow(
         user_id=user_id,
@@ -187,11 +217,27 @@ def _send_daily_report(
 
 
 register(
+    name="configure_resend",
+    fn=_configure_resend,
+    description=(
+        "Configure Resend for Navbe HTML email reports. "
+        "API key is encrypted at rest under ~/.navbe/email.json."
+    ),
+    parameters={
+        "api_key": {"type": "string", "description": "Resend API key (re_...)"},
+        "from_addr": {
+            "type": "string",
+            "description": "From address (default onboarding@resend.dev)",
+        },
+    },
+)
+
+register(
     name="configure_email",
     fn=_configure_email,
     description=(
-        "Configure SMTP for Navbe HTML email reports. Password is encrypted at rest. "
-        "Probes login when possible."
+        "Configure SMTP for Navbe HTML email reports (fallback). Prefer configure_resend. "
+        "Password is encrypted at rest."
     ),
     parameters={
         "host": {"type": "string", "description": "SMTP host"},
@@ -223,7 +269,7 @@ register(
     fn=_schedule_daily_report,
     description=(
         "Schedule process langfuse_daily_report (default cron 0 23 * * * UTC) to email "
-        "the HTML retailer report. Requires configure_email first."
+        "the HTML retailer report. Requires configure_resend (or configure_email) first."
     ),
     parameters={
         "destination_id": {"type": "string", "description": "DuckDB destination id"},

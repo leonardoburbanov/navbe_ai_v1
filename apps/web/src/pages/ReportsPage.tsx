@@ -111,7 +111,8 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
       <h2 style={{ marginTop: 0 }}>Reports</h2>
       <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
         Run analysis templates against a process destination (same queries as
-        MCP <code>list_analysis_templates</code>).
+        MCP <code>list_analysis_templates</code>). For email delivery, open{" "}
+        <strong>Settings</strong>.
       </p>
 
       <div

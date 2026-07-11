@@ -1412,11 +1412,15 @@ name = "navbe-notify"
 version = "0.1.0"
 source = { editable = "packages/navbe_notify" }
 dependencies = [
+    { name = "httpx" },
     { name = "navbe-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "navbe-core", editable = "packages/navbe_core" }]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "navbe-core", editable = "packages/navbe_core" },
+]
 
 [[package]]
 name = "navbe-scheduler"

@@ -21,6 +21,7 @@ export type RunRow = {
   started_at: string;
   completed_at: string | null;
   error?: string | null;
+  output?: Record<string, unknown> | null;
 };
 
 export type FlowNode = {
@@ -58,6 +59,7 @@ export type CatalogResponse = {
     type: string;
     name: string;
     schema_version: number | null;
+    config_summary?: Record<string, string | null>;
     templates: AnalysisTemplate[];
   }>;
   connector_types: string[];
@@ -89,6 +91,12 @@ export type ReplayRow = {
   destination_id?: string;
 };
 
+export type EmailStatus = {
+  configured: boolean;
+  provider: string | null;
+  from_addr: string | null;
+};
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) {
@@ -109,6 +117,10 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     throw new Error(`${res.status} ${path}: ${detail}`);
   }
   return res.json() as Promise<T>;
+}
+
+export function fetchHealth(): Promise<{ status: string }> {
+  return getJson("/health");
 }
 
 export function fetchProcesses(): Promise<{ processes: ProcessRow[] }> {
@@ -152,4 +164,41 @@ export function queryWorkflowDestination(
     page,
     page_size: pageSize,
   });
+}
+
+export function fetchEmailStatus(): Promise<EmailStatus> {
+  return getJson("/api/settings/email");
+}
+
+export function configureResendApi(
+  apiKey: string,
+  fromAddr = "onboarding@resend.dev",
+): Promise<Record<string, unknown>> {
+  return postJson("/api/settings/resend", {
+    api_key: apiKey,
+    from_addr: fromAddr,
+  });
+}
+
+export function previewDailyReportApi(
+  destinationId: string,
+): Promise<Record<string, unknown>> {
+  return postJson("/api/reports/preview", { destination_id: destinationId });
+}
+
+export function scheduleDailyReportApi(body: {
+  destination_id: string;
+  email_to: string;
+  when?: string;
+  name?: string;
+}): Promise<Record<string, unknown>> {
+  return postJson("/api/reports/schedule", body);
+}
+
+export function sendDailyReportApi(body: {
+  workflow_id?: string;
+  destination_id?: string;
+  email_to?: string;
+}): Promise<Record<string, unknown>> {
+  return postJson("/api/reports/send", body);
 }

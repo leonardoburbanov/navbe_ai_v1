@@ -387,7 +387,8 @@ Tools should feel like *workflows*, not raw SDK wrappers. Prefer fewer, higher-l
 | `subscribe` / `unsubscribe` | Register interest in topics (`process.langfuse_daily`, `run.*`, …) |
 | `pull_events` | Poll bus since subscriber cursor (multi-agent fan-out) |
 | `replay_trace_to_api` | MVP B one-shot or save-as-workflow |
-| `configure_email` | Elicit + validate SMTP; store encrypted secrets |
+| `configure_resend` | Elicit + store Resend API key (encrypted); preferred email channel |
+| `configure_email` | Elicit + validate SMTP; store encrypted secrets (fallback) |
 | `preview_daily_report` | Build HTML retailer report to `~/.navbe/reports/` (no send) |
 | `schedule_daily_report` | Schedule `langfuse_daily_report` end-of-day email (default `0 23 * * *`) |
 | `send_daily_report` | Run report workflow now and send HTML email |
@@ -418,7 +419,7 @@ Tools should feel like *workflows*, not raw SDK wrappers. Prefer fewer, higher-l
 | OLTP / control plane | SQLite | Workflows, runs, secrets metadata |
 | Scheduler | APScheduler AsyncIO | Same process as daemon for MVP |
 | Event bus | SQLite append-only + in-process pub/sub | Poll MCP + optional SSE; not Kafka |
-| Email notify | SMTP via stdlib `smtplib` | HTML reports; secrets Fernet-encrypted in `~/.navbe` |
+| Email notify | Resend API (primary) or SMTP | HTML reports; secrets Fernet-encrypted in `~/.navbe` |
 | Secrets | OS keyring or Fernet at rest in `~/.navbe` | Never in workflow IR plaintext |
 | Control UI | React (Next.js or Vite) + DAG canvas (e.g. React Flow) | Monitor, catalog, live graph; `pnpm` |
 | Desktop shell | Tauri (preferred) or Electron | Installer + tray; loads Control UI; manages daemon |

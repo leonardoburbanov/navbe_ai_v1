@@ -305,13 +305,13 @@ def build_retailer_report(state: dict) -> dict:
 
 @step("send_email_report")
 def send_email_report(state: dict) -> dict:
-    """Render HTML and either preview to disk or send via SMTP."""
+    """Render HTML and either preview to disk or send via Resend/SMTP."""
     from navbe_notify import bus as events
     from navbe_notify.email_report import (
-        load_smtp_config,
+        email_configured,
         render_retailer_daily_html,
         save_report_preview,
-        send_smtp_html,
+        send_html_email,
     )
 
     from navbe_core.models_report import RetailerReportPayload
@@ -339,17 +339,16 @@ def send_email_report(state: dict) -> dict:
             "totals": payload.totals,
         }
 
-    smtp = load_smtp_config()
-    if smtp is None:
-        events.publish(topic, "report.failed", {"error": "SMTP not configured"})
+    if not email_configured():
+        events.publish(topic, "report.failed", {"error": "email not configured"})
         return {
             "email_sent": False,
             "needs_input": {
-                "fields": ["host", "port", "username", "password", "from_addr", "use_tls"],
-                "hint": "call configure_email first",
+                "fields": ["api_key", "from_addr"],
+                "hint": "call configure_resend (or configure_email for SMTP)",
             },
             "preview_path": str(path),
-            "next_step": "configure_email",
+            "next_step": "configure_resend",
         }
 
     to_raw = state.get("email_to") or []
@@ -366,7 +365,7 @@ def send_email_report(state: dict) -> dict:
 
     subject = f"Navbe daily retailer report — {payload.report_date}"
     try:
-        send_smtp_html(to_list, subject, html, smtp)
+        send_meta = send_html_email(to_list, subject, html)
     except Exception as e:
         events.publish(topic, "report.failed", {"error": str(e), "report_date": payload.report_date})
         return {"email_sent": False, "error": str(e), "preview_path": str(path)}
@@ -379,6 +378,7 @@ def send_email_report(state: dict) -> dict:
             "to": to_list,
             "path": str(path),
             "totals": payload.totals,
+            "provider": send_meta.get("provider"),
         },
     )
     return {
@@ -387,4 +387,5 @@ def send_email_report(state: dict) -> dict:
         "report_date": payload.report_date,
         "to": to_list,
         "totals": payload.totals,
+        "provider": send_meta.get("provider"),
     }

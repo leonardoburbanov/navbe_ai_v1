@@ -39,11 +39,15 @@ export function NavbeFlow({ workflowId, selectedStep, onSelectStep }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const nodeStatus = useDagStore((s) => s.nodeStatus[workflowId] ?? {});
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setLoading(true);
+    setNodes([]);
+    setEdges([]);
     fetchGraph(workflowId)
       .then(({ nodes: raw, edges: rawEdges }) => {
         if (cancelled) return;
@@ -64,6 +68,9 @@ export function NavbeFlow({ workflowId, selectedStep, onSelectStep }: Props) {
       })
       .catch((e: Error) => {
         if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -85,6 +92,43 @@ export function NavbeFlow({ workflowId, selectedStep, onSelectStep }: Props) {
 
   if (error) {
     return <p style={{ color: "#ef4444" }}>Failed to load graph: {error}</p>;
+  }
+  if (loading) {
+    return (
+      <div
+        style={{
+          height: 560,
+          border: "1px solid #e2e8f0",
+          borderRadius: 8,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#64748b",
+          background: "#f8fafc",
+        }}
+      >
+        Loading DAG…
+      </div>
+    );
+  }
+  if (nodes.length === 0) {
+    return (
+      <div
+        style={{
+          height: 240,
+          border: "1px dashed #cbd5e1",
+          borderRadius: 8,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#64748b",
+          padding: 24,
+          textAlign: "center",
+        }}
+      >
+        This workflow has no graph nodes.
+      </div>
+    );
   }
 
   return (
