@@ -1,0 +1,16 @@
+[project]
+name = "navbe-scheduler"
+version = "0.1.0"
+description = "APScheduler cron and schedule parsing"
+requires-python = ">=3.12"
+dependencies = [
+    "apscheduler>=3.11",
+    "croniter>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["navbe_scheduler"]

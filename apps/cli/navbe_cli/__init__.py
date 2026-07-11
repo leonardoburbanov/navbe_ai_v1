@@ -1,0 +1,1 @@
+"""Navbe CLI package."""

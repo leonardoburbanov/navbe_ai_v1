@@ -1,0 +1,59 @@
+[project]
+name = "navbe"
+version = "0.1.0"
+description = "Workflow automation and orchestration for AI agents"
+requires-python = ">=3.12"
+dependencies = [
+    "navbe-api",
+    "navbe-cli",
+    "navbe-connectors",
+    "navbe-core",
+    "navbe-destinations",
+    "navbe-mcp",
+    "navbe-notify",
+    "navbe-scheduler",
+    "navbe-transforms",
+]
+
+[tool.uv.workspace]
+members = ["packages/*", "apps/cli"]
+
+[tool.uv.sources]
+navbe-api = { workspace = true }
+navbe-cli = { workspace = true }
+navbe-connectors = { workspace = true }
+navbe-core = { workspace = true }
+navbe-destinations = { workspace = true }
+navbe-mcp = { workspace = true }
+navbe-notify = { workspace = true }
+navbe-scheduler = { workspace = true }
+navbe-transforms = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.11",
+    "ty>=0.0.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "B008",  # FastAPI Depends() in defaults is idiomatic
+    "B006",  # FastMCP tool signatures often use dict defaults
+    "E501",  # line length; formatter owns wrapping
+]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.rules]
+deprecated = "ignore"
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+addopts = "-q --tb=short"

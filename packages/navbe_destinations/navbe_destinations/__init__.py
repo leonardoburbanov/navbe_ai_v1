@@ -1,0 +1,1 @@
+"""Navbe destination plugins."""
