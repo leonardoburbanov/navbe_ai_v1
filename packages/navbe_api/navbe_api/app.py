@@ -44,6 +44,15 @@ from navbe_api.sse import stream_all_events, stream_workflow_events
 DEMO_USER_ID = "demo"
 DEMO_USER_EMAIL = "demo@navbe.local"
 
+
+class QueryWorkflowRequest(BaseModel):
+    """Body for Control UI destination queries."""
+
+    sql: str
+    page: int = 1
+    page_size: int = 10
+
+
 scheduler_adapter = APSchedulerAdapter()
 
 
@@ -524,25 +533,20 @@ def _register_routes(app: FastAPI) -> None:
         rows.sort(key=lambda r: r.get("ts") or "", reverse=True)
         return {"replays": rows}
 
-    class QueryWorkflowRequest(BaseModel):
-        sql: str
-        page: int = 1
-        page_size: int = 10
-
     @app.post("/api/workflows/{workflow_id}/query")
     def api_query_workflow_destination(
         workflow_id: str,
         payload: QueryWorkflowRequest,
-        user: UserModel = Depends(get_current_user),
         db: Session = Depends(get_db),
     ) -> dict:
+        """Run a read-only SELECT against a workflow destination (Control UI)."""
         repo = WorkflowRepository(db)
         agent = WorkflowAgent(repo, scheduler_adapter)
         try:
             return dispatch(
                 "query_workflow_destination",
                 agent=agent,
-                user_id=user.id,
+                user_id=DEMO_USER_ID,
                 workflow_id=workflow_id,
                 sql=payload.sql,
                 page=payload.page,

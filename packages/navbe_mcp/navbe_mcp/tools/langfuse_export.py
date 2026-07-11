@@ -10,7 +10,7 @@ def _create_langfuse_export_workflow(
     connector_id: str,
     destination_id: str,
     when: str = "+5s",
-    include_observations: bool = False,
+    include_observations: bool = True,
     process_slug: str = "langfuse_daily",
 ) -> dict:
     workflow = agent.create_langfuse_export_workflow(
@@ -36,9 +36,9 @@ register(
     fn=_create_langfuse_export_workflow,
     description=(
         "Schedule a workflow that fetches traces from a Langfuse connector "
-        "and writes them to a destination. Set include_observations=true to also fetch "
-        "and store each trace's observations (spans/generations/events) in DuckDB "
-        "(exports 10 traces when observations are enabled, 50 otherwise). "
+        "and writes them to a destination. Observations are included by default "
+        "(needed for input/output token rollup into the retailer mart); "
+        "exports 10 traces when observations are enabled, 50 otherwise. "
         "Requires an existing connector_id (see create_connector/list_connectors) and "
         "destination_id (see create_destination/list_destinations)."
     ),
@@ -55,7 +55,10 @@ register(
         },
         "include_observations": {
             "type": "boolean",
-            "description": "Also fetch and export each trace's observations (DuckDB only, default false)",
+            "description": (
+                "Fetch and export each trace's observations (default true; "
+                "required for accurate input token reports)"
+            ),
         },
         "process_slug": {
             "type": "string",

@@ -57,7 +57,7 @@ class WorkflowAgent:
         connector_id: str,
         destination_id: str,
         when: str = "+5s",
-        include_observations: bool = False,
+        include_observations: bool = True,
         process_slug: str = "langfuse_daily",
     ) -> WorkflowModel:
         connector = self.repo.get_connector(connector_id, user_id)
@@ -198,7 +198,10 @@ class WorkflowAgent:
         if workflow is None:
             raise ValueError(f"Workflow not found: {workflow_id}")
 
-        destination_id = json.loads(workflow.context).get("destination_id")
+        ctx = json.loads(workflow.context)
+        destination_id = ctx.get("destination_id") or (ctx.get("input") or {}).get(
+            "destination_id"
+        )
         if not destination_id:
             raise ValueError(f"Workflow has no destination to query: {workflow_id}")
 

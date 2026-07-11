@@ -32,7 +32,7 @@ SOURCES: dict[str, dict] = {
                 ["write_traces", "refresh_retailer_mart"],
             ],
         },
-        "default_input": {"limit": 50, "include_observations": False},
+        "default_input": {"limit": 50, "include_observations": True},
     },
 }
 

@@ -29,6 +29,11 @@ _OBS_KNOWN_KEYS = {
     "startTime",
     "endTime",
     "usage",
+    "usageDetails",
+    "usage_details",
+    "promptTokens",
+    "completionTokens",
+    "totalTokens",
     "calculatedTotalCost",
     "totalCost",
 }
@@ -49,6 +54,31 @@ def test_langfuse_connection(host: str, public_key: str, secret_key: str) -> str
         return "connected" if response.status_code == 200 else "error"
     except httpx.HTTPError:
         return "error"
+
+
+def _as_int(value: object) -> int:
+    """Best-effort int for token fields that may be int, float, or string."""
+    if value is None:
+        return 0
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _obs_token(o: dict, usage_key: str, camel_key: str) -> int | None:
+    """Resolve a token count from usage / camelCase / usageDetails (Langfuse variants)."""
+    usage = o.get("usage") or {}
+    details = o.get("usageDetails") or o.get("usage_details") or {}
+    for candidate in (
+        usage.get(usage_key),
+        o.get(camel_key),
+        details.get(usage_key),
+        details.get(camel_key),
+    ):
+        if candidate is not None:
+            return _as_int(candidate)
+    return None
 
 
 def _extract_trace(t: dict) -> dict:
@@ -73,11 +103,15 @@ def _extract_trace(t: dict) -> dict:
 
 def _extract_observation(o: dict, trace_id: str | None = None) -> dict:
     """Map a Langfuse observation payload to destination columns."""
-    usage = o.get("usage") or {}
     extras = {k: v for k, v in o.items() if k not in _OBS_KNOWN_KEYS}
     cost = o.get("calculatedTotalCost")
     if cost is None:
         cost = o.get("totalCost")
+    prompt = _obs_token(o, "input", "promptTokens")
+    completion = _obs_token(o, "output", "completionTokens")
+    total = _obs_token(o, "total", "totalTokens")
+    if total is None and (prompt is not None or completion is not None):
+        total = _as_int(prompt) + _as_int(completion)
     return {
         "id": o.get("id"),
         "trace_id": trace_id or o.get("traceId"),
@@ -85,12 +119,32 @@ def _extract_observation(o: dict, trace_id: str | None = None) -> dict:
         "name": o.get("name"),
         "start_time": o.get("startTime"),
         "end_time": o.get("endTime"),
-        "prompt_tokens": usage.get("input"),
-        "completion_tokens": usage.get("output"),
-        "total_tokens": usage.get("total"),
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
         "total_cost": cost,
         "extras": json.dumps(extras) if extras else None,
     }
+
+
+def _rollup_trace_tokens(trace: dict) -> None:
+    """Fill trace token columns from observations when Langfuse omits trace.usage.
+
+    Langfuse list/get traces expose totalCost but not usage; tokens live on
+    GENERATION observations (what the Langfuse UI aggregates).
+    """
+    obs = trace.get("observations") or []
+    if not obs:
+        return
+    if trace.get("prompt_tokens") is None:
+        trace["prompt_tokens"] = sum(_as_int(o.get("prompt_tokens")) for o in obs)
+    if trace.get("completion_tokens") is None:
+        trace["completion_tokens"] = sum(_as_int(o.get("completion_tokens")) for o in obs)
+    if trace.get("total_tokens") is None:
+        total = sum(_as_int(o.get("total_tokens")) for o in obs)
+        if total == 0:
+            total = _as_int(trace.get("prompt_tokens")) + _as_int(trace.get("completion_tokens"))
+        trace["total_tokens"] = total
 
 
 def _from_timestamp_param(since: datetime) -> str:
@@ -149,6 +203,7 @@ def fetch_last_traces(
                 )
             except httpx.HTTPError:
                 trace["observations"] = []
+            _rollup_trace_tokens(trace)
     return traces
 
 
@@ -196,6 +251,7 @@ def fetch_traces_page(
     if include_observations:
         for trace in traces:
             trace["observations"] = fetch_observations(host, public_key, secret_key, trace["id"])
+            _rollup_trace_tokens(trace)
 
     return {
         "traces": traces,
