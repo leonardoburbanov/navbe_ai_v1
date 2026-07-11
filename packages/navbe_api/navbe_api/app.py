@@ -287,6 +287,71 @@ def preview_workflow(workflow_id: str) -> dict:
         return {"error": str(e)}
 
 
+@mcp.tool
+def configure_email(
+    host: str,
+    username: str,
+    password: str,
+    from_addr: str,
+    port: int = 587,
+    use_tls: bool = True,
+) -> dict:
+    """Configure SMTP for daily HTML email reports (password encrypted at rest)."""
+    return _run_tool(
+        "configure_email",
+        host=host,
+        username=username,
+        password=password,
+        from_addr=from_addr,
+        port=port,
+        use_tls=use_tls,
+    )
+
+
+@mcp.tool
+def preview_daily_report(destination_id: str) -> dict:
+    """Build retailer HTML report to ~/.navbe/reports/ without sending email."""
+    try:
+        return _run_tool("preview_daily_report", destination_id=destination_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def schedule_daily_report(
+    destination_id: str,
+    email_to: str,
+    when: str = "0 23 * * *",
+    name: str = "langfuse_daily_report",
+) -> dict:
+    """Schedule end-of-day langfuse_daily_report HTML email (default 23:00 UTC)."""
+    return _run_tool(
+        "schedule_daily_report",
+        destination_id=destination_id,
+        email_to=email_to,
+        when=when,
+        name=name,
+    )
+
+
+@mcp.tool
+def send_daily_report(
+    workflow_id: str | None = None,
+    destination_id: str | None = None,
+    email_to: str | None = None,
+) -> dict:
+    """Send the daily retailer HTML email now."""
+    try:
+        return _run_tool(
+            "send_daily_report",
+            workflow_id=workflow_id,
+            destination_id=destination_id,
+            email_to=email_to,
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
 mcp_app = mcp.http_app(path="/", stateless_http=True)
 
 

@@ -51,7 +51,7 @@ AI agents can call tools, but they cannot reliably own recurring data work:
 
 ---
 
-## Two MVP tracks (start here)
+## Three MVP tracks (start here)
 
 ### MVP A — Langfuse monitor → local analytics
 
@@ -86,7 +86,21 @@ AI agents can call tools, but they cannot reliably own recurring data work:
 5. Diff/compare (exact, JSON-path, or LLM-assisted later — start with structured diff).
 6. Optionally save as a reusable workflow (manual or scheduled batch of trace IDs).
 
-Both MVPs share the same orchestration core, connector/destination plugins, scheduler, and notification bus.
+### MVP C — Daily retailer HTML email
+
+**User intent:**  
+*"At the end of each day, email me a beautiful HTML report of Langfuse tokens/cost per retailer, comparing days and projecting forward."*
+
+**Guided flow (MCP tools drive this):**
+
+1. **Configure email** — Elicit SMTP host/port/user/password/from; validate; store secrets encrypted (never in workflow IR).
+2. **Preview** — Build report from `mart_retailer_token_cost_daily`; write HTML under `~/.navbe/reports/`; confirm layout before sending.
+3. **Schedule** — Process `langfuse_daily_report` (default cron `0 23 * * *` UTC) after the daily sync has refreshed the mart.
+4. **Send** — HTML email with DoD deltas, 7-day averages, and **7-day run-rate projections** per `retailer_id` (next 7 days + month remainder + MTD). Heuristic only — no ML.
+
+Assumes MVP A mart is populated (`langfuse_daily` with observations). Report workflow does not replace the sync.
+
+All three MVPs share the same orchestration core, connector/destination plugins, scheduler, and notification bus (pub/sub + email channel).
 
 ---
 
@@ -106,9 +120,9 @@ Both MVPs share the same orchestration core, connector/destination plugins, sche
 │  Event bus (pub/sub) — agents + UI subscribe equally               │
 └──────────┬─────────────────┬─────────────────┬─────────────────────┘
            ▼                 ▼                 ▼
-     Connectors        Transforms        Destinations
-     Langfuse          tag / agg         DuckDB / SQLite
-     Folder / HTTP     compare
+     Connectors        Transforms        Destinations        Notify
+     Langfuse          tag / agg         DuckDB / SQLite     bus + SMTP email
+     Folder / HTTP     compare / report
 ```
 
 Many processes run concurrently under the daemon. Agents do not keep private copies of progress — they **subscribe** or **query** the hub. The Control UI is the visual subscriber: live DAG, run timeline, catalog.
@@ -373,6 +387,10 @@ Tools should feel like *workflows*, not raw SDK wrappers. Prefer fewer, higher-l
 | `subscribe` / `unsubscribe` | Register interest in topics (`process.langfuse_daily`, `run.*`, …) |
 | `pull_events` | Poll bus since subscriber cursor (multi-agent fan-out) |
 | `replay_trace_to_api` | MVP B one-shot or save-as-workflow |
+| `configure_email` | Elicit + validate SMTP; store encrypted secrets |
+| `preview_daily_report` | Build HTML retailer report to `~/.navbe/reports/` (no send) |
+| `schedule_daily_report` | Schedule `langfuse_daily_report` end-of-day email (default `0 23 * * *`) |
+| `send_daily_report` | Run report workflow now and send HTML email |
 
 **Elicitation pattern:** if required config is missing, return a structured `needs_input` payload (fields, secrets, defaults) instead of failing opaquely. Desktop/CLI/agent then supply values via follow-up tool call.
 
@@ -400,6 +418,7 @@ Tools should feel like *workflows*, not raw SDK wrappers. Prefer fewer, higher-l
 | OLTP / control plane | SQLite | Workflows, runs, secrets metadata |
 | Scheduler | APScheduler AsyncIO | Same process as daemon for MVP |
 | Event bus | SQLite append-only + in-process pub/sub | Poll MCP + optional SSE; not Kafka |
+| Email notify | SMTP via stdlib `smtplib` | HTML reports; secrets Fernet-encrypted in `~/.navbe` |
 | Secrets | OS keyring or Fernet at rest in `~/.navbe` | Never in workflow IR plaintext |
 | Control UI | React (Next.js or Vite) + DAG canvas (e.g. React Flow) | Monitor, catalog, live graph; `pnpm` |
 | Desktop shell | Tauri (preferred) or Electron | Installer + tray; loads Control UI; manages daemon |
@@ -436,10 +455,16 @@ MCP remains the agent product. Control UI + desktop are the human product surfac
 - **DAG canvas:** render Workflow IR, live node states during runs, non-linear edges.
 - Desktop shell (tray + daemon lifecycle) packaging the Control UI.
 
-### Phase 3 — Hardening
+### Phase 3 — MVP C daily email report (Sprint 5)
+
+- SMTP configure + encrypted secrets; HTML retailer report (DoD, 7d, run-rate projections).
+- Process `langfuse_daily_report` (end-of-day cron); `preview_daily_report` / `send_daily_report`.
+- Bus events `report.previewed` / `report.sent` / `report.failed`.
+
+### Phase 4 — Hardening
 
 - Local folder connector.
-- Richer UI: credentials editors, trigger management, preview promote, schedule editor.
+- Richer UI: credentials editors, trigger management, preview promote, schedule editor, email settings.
 - Docker compose for headless.
 - Second connector only when a real user asks — prove the plugin API.
 
@@ -532,6 +557,7 @@ Apply these on every change. If a design violates them, simplify before merging 
 5. After a non-breaking destination/connector schema change, the next scheduled run migrates (if needed) and completes without manual rebuild; agents see `schema.warning` / `schema.changed` events when drift was absorbed.
 6. User can preview a workflow, switch the destination database, and add a destination trigger via MCP without rewriting the workflow IR from scratch.
 7. Control UI shows live execution and a modern DAG for the Langfuse workflow; catalog lists available connectors/destinations; UI and MCP agree on process status.
+8. End-of-day: agent configures SMTP, previews HTML retailer report, schedules `langfuse_daily_report`; email arrives with DoD comparisons and 7-day run-rate projections per `retailer_id` matching the mart.
 
 ---
 
@@ -555,6 +581,7 @@ Apply these on every change. If a design violates them, simplify before merging 
 | Control UI | Human cockpit: monitor, DAG canvas, catalog (desktop or local web) |
 | DAG canvas | Interactive visualization of Workflow IR with live run state |
 | Elicitation | Structured ask for missing config/secrets |
+| Daily email report | HTML email from retailer mart (DoD + 7d run-rate projections) via SMTP |
 
 ---
 

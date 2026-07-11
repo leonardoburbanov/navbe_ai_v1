@@ -10,9 +10,10 @@ from typing import Any
 
 import duckdb
 from navbe_connectors.langfuse import fetch_last_traces
-from navbe_core.config import DATA_DIR
 from navbe_destinations.duckdb import ensure_schema, write_observations, write_traces
 from navbe_transforms.tags import MART_REFRESH_SQL
+
+from navbe_core.config import DATA_DIR
 
 StepFn = Callable[[dict], dict]
 
@@ -276,3 +277,114 @@ def store_replay(state: dict) -> dict:
     finally:
         con.close()
     return {"replay_id": replay_id}
+
+
+def _duckdb_path(state: dict) -> str:
+    dest_config = state.get("dest_config") or {}
+    return dest_config.get("db_path") or os.path.join(str(DATA_DIR), "langfuse.duckdb")
+
+
+@step("build_retailer_report")
+def build_retailer_report(state: dict) -> dict:
+    """Build DoD / 7d / projection payload from mart_retailer_token_cost_daily."""
+    from navbe_transforms.retailer_report import build_retailer_report_payload
+
+    if state.get("dest_type") not in (None, "duckdb"):
+        return {"error": "duckdb destination required for retailer report"}
+    db_path = _duckdb_path(state)
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        payload = build_retailer_report_payload(con)
+    finally:
+        con.close()
+    return {
+        "report_payload": payload.model_dump(),
+        "report_date": payload.report_date,
+    }
+
+
+@step("send_email_report")
+def send_email_report(state: dict) -> dict:
+    """Render HTML and either preview to disk or send via SMTP."""
+    from navbe_notify import bus as events
+    from navbe_notify.email_report import (
+        load_smtp_config,
+        render_retailer_daily_html,
+        save_report_preview,
+        send_smtp_html,
+    )
+
+    from navbe_core.models_report import RetailerReportPayload
+
+    raw = state.get("report_payload")
+    if not raw:
+        return {"error": "missing report_payload", "email_sent": False}
+    payload = RetailerReportPayload.model_validate(raw)
+    html = render_retailer_daily_html(payload)
+    process_slug = state.get("process_slug") or "langfuse_daily_report"
+    topic = f"process.{process_slug}"
+    preview_only = state.get("mode") == "preview" or state.get("preview_only")
+
+    path = save_report_preview(html, payload.report_date)
+    if preview_only:
+        events.publish(
+            topic,
+            "report.previewed",
+            {"report_date": payload.report_date, "path": str(path), "totals": payload.totals},
+        )
+        return {
+            "email_sent": False,
+            "preview_path": str(path),
+            "report_date": payload.report_date,
+            "totals": payload.totals,
+        }
+
+    smtp = load_smtp_config()
+    if smtp is None:
+        events.publish(topic, "report.failed", {"error": "SMTP not configured"})
+        return {
+            "email_sent": False,
+            "needs_input": {
+                "fields": ["host", "port", "username", "password", "from_addr", "use_tls"],
+                "hint": "call configure_email first",
+            },
+            "preview_path": str(path),
+            "next_step": "configure_email",
+        }
+
+    to_raw = state.get("email_to") or []
+    if isinstance(to_raw, str):
+        to_list = [a.strip() for a in to_raw.split(",") if a.strip()]
+    else:
+        to_list = list(to_raw)
+    if not to_list:
+        return {
+            "email_sent": False,
+            "needs_input": {"fields": ["email_to"], "hint": "provide recipient list"},
+            "preview_path": str(path),
+        }
+
+    subject = f"Navbe daily retailer report — {payload.report_date}"
+    try:
+        send_smtp_html(to_list, subject, html, smtp)
+    except Exception as e:
+        events.publish(topic, "report.failed", {"error": str(e), "report_date": payload.report_date})
+        return {"email_sent": False, "error": str(e), "preview_path": str(path)}
+
+    events.publish(
+        topic,
+        "report.sent",
+        {
+            "report_date": payload.report_date,
+            "to": to_list,
+            "path": str(path),
+            "totals": payload.totals,
+        },
+    )
+    return {
+        "email_sent": True,
+        "preview_path": str(path),
+        "report_date": payload.report_date,
+        "to": to_list,
+        "totals": payload.totals,
+    }

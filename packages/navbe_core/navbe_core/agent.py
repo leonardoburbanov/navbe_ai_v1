@@ -90,6 +90,46 @@ class WorkflowAgent:
             },
         )
 
+    def create_daily_report_workflow(
+        self,
+        user_id: str,
+        destination_id: str,
+        email_to: list[str] | str,
+        when: str = "0 23 * * *",
+        name: str = "langfuse_daily_report",
+        process_slug: str = "langfuse_daily_report",
+    ) -> WorkflowModel:
+        """Schedule end-of-day HTML email report from the retailer mart."""
+        destination = self.repo.get_destination(destination_id, user_id)
+        if destination is None:
+            raise ValueError(f"Destination not found: {destination_id}")
+        if isinstance(email_to, str):
+            recipients = [a.strip() for a in email_to.split(",") if a.strip()]
+        else:
+            recipients = list(email_to)
+        if not recipients:
+            raise ValueError("email_to is required")
+
+        graph = SOURCES["langfuse_daily_report"]["graph"]
+        return self.schedule(
+            user_id=user_id,
+            name=name,
+            task=(
+                f"End-of-day retailer HTML email report from '{destination.name}' "
+                f"to {', '.join(recipients)}"
+            ),
+            when=when,
+            process_slug=process_slug,
+            context={
+                "action": "graph",
+                "graph": graph,
+                "input": {
+                    "destination_id": destination.id,
+                    "email_to": recipients,
+                },
+            },
+        )
+
     def suggest(self, user_id: str, hint: str) -> dict:
         """Propose a DAG workflow for a data source named in free text (e.g.
         "I want to monitor langfuse traces"), using this backend's per-source
@@ -318,6 +358,8 @@ class WorkflowAgent:
                 initial["since"] = workflow.watermark_at.isoformat()
             compiled = build_graph(context["graph"])
             state = {**initial, "workflow_id": workflow.id, "mode": mode}
+            if workflow.process_slug:
+                state["process_slug"] = workflow.process_slug
             for update in compiled.stream(state, stream_mode="updates"):
                 for step_name, step_state in update.items():
                     state = step_state

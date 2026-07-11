@@ -1411,6 +1411,12 @@ requires-dist = [
 name = "navbe-notify"
 version = "0.1.0"
 source = { editable = "packages/navbe_notify" }
+dependencies = [
+    { name = "navbe-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "navbe-core", editable = "packages/navbe_core" }]
 
 [[package]]
 name = "navbe-scheduler"
@@ -1431,6 +1437,12 @@ requires-dist = [
 name = "navbe-transforms"
 version = "0.1.0"
 source = { editable = "packages/navbe_transforms" }
+dependencies = [
+    { name = "navbe-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "navbe-core", editable = "packages/navbe_core" }]
 
 [[package]]
 name = "openapi-pydantic"

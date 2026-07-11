@@ -34,6 +34,25 @@ SOURCES: dict[str, dict] = {
         },
         "default_input": {"limit": 50, "include_observations": True},
     },
+    "langfuse_daily_report": {
+        "label": "Langfuse daily email report",
+        "aliases": [
+            "daily report",
+            "email report",
+            "retailer report",
+            "langfuse report",
+        ],
+        "entities": ["report"],
+        "connector_type": "langfuse",
+        "recommended_destination_type": "duckdb",
+        "dedup_strategy": "Read-only mart query; no destination writes.",
+        "graph": {
+            "entry": "build_retailer_report",
+            "nodes": ["build_retailer_report", "send_email_report"],
+            "edges": [["build_retailer_report", "send_email_report"]],
+        },
+        "default_input": {},
+    },
 }
 
 

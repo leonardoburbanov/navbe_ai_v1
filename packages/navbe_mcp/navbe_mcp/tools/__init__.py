@@ -1,6 +1,7 @@
 """MCP tool implementations — import for side-effect registration."""
 
 from navbe_mcp.tools import connectors as connectors
+from navbe_mcp.tools import daily_report as daily_report
 from navbe_mcp.tools import destinations as destinations
 from navbe_mcp.tools import get_process_status as get_process_status
 from navbe_mcp.tools import langfuse_export as langfuse_export
@@ -20,6 +21,7 @@ from navbe_mcp.tools import suggest as suggest
 
 __all__ = [
     "connectors",
+    "daily_report",
     "destinations",
     "get_process_status",
     "langfuse_export",

@@ -12,8 +12,10 @@ _STEP_NODE_TYPES: dict[str, str] = {
     "write_traces": "destination",
     "store_replay": "destination",
     "refresh_retailer_mart": "transform",
+    "build_retailer_report": "transform",
     "compare_outputs": "transform",
     "call_api": "control",
+    "send_email_report": "control",
 }
 
 

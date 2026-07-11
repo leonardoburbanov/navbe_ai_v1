@@ -3,7 +3,9 @@ name = "navbe-transforms"
 version = "0.1.0"
 description = "Reusable transform steps (tag parse, aggregate)"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "navbe-core",
+]
 
 [build-system]
 requires = ["hatchling"]
