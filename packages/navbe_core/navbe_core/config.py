@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 7700
     ENVIRONMENT: str = "development"
+    # Control UI origin for MCP live_url deep links (env: NAVBE_UI_URL).
+    UI_URL: str = "http://127.0.0.1:5173"
 
     model_config = SettingsConfigDict(env_prefix="NAVBE_", env_file=".env", extra="ignore")
 

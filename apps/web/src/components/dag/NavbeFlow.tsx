@@ -6,8 +6,11 @@ import {
   type Node,
   type NodeTypes,
   ReactFlow,
+  ReactFlowProvider,
   useEdgesState,
+  useNodesInitialized,
   useNodesState,
+  useReactFlow,
 } from "@xyflow/react";
 import { useEffect, useState } from "react";
 import "@xyflow/react/dist/style.css";
@@ -34,13 +37,24 @@ type Props = {
   onSelectStep: (step: string | null) => void;
 };
 
+/** Fit viewport once React Flow has measured custom nodes. */
+function FitViewOnReady() {
+  const ready = useNodesInitialized();
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    if (ready) fitView({ padding: 0.2 });
+  }, [ready, fitView]);
+  return null;
+}
+
 /** Read-only React Flow canvas with live SSE status overlay. */
-export function NavbeFlow({ workflowId, selectedStep, onSelectStep }: Props) {
+function NavbeFlowInner({ workflowId, selectedStep, onSelectStep }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const nodeStatus = useDagStore((s) => s.nodeStatus[workflowId] ?? {});
+  // Stable selector — never `?? {}` (new object each render → setNodes loop → blank canvas).
+  const nodeStatus = useDagStore((s) => s.nodeStatus[workflowId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +68,7 @@ export function NavbeFlow({ workflowId, selectedStep, onSelectStep }: Props) {
         const asNodes: Node[] = raw.map((n) => ({
           id: n.id,
           type: n.type,
-          data: n.data,
+          data: { ...n.data, status: "idle" },
           position: n.position,
         }));
         const asEdges: Edge[] = rawEdges.map((e) => ({
@@ -83,7 +97,7 @@ export function NavbeFlow({ workflowId, selectedStep, onSelectStep }: Props) {
         ...n,
         data: {
           ...n.data,
-          status: nodeStatus[n.id] ?? "idle",
+          status: nodeStatus?.[n.id] ?? "idle",
         },
         selected: selectedStep === n.id,
       })),
@@ -145,11 +159,22 @@ export function NavbeFlow({ workflowId, selectedStep, onSelectStep }: Props) {
         nodesConnectable={false}
         elementsSelectable={true}
         fitView
+        proOptions={{ hideAttribution: true }}
       >
+        <FitViewOnReady />
         <Background />
         <Controls showInteractive={false} />
         <MiniMap />
       </ReactFlow>
     </div>
+  );
+}
+
+/** Provider wrapper — required for useReactFlow / MiniMap context. */
+export function NavbeFlow(props: Props) {
+  return (
+    <ReactFlowProvider>
+      <NavbeFlowInner {...props} />
+    </ReactFlowProvider>
   );
 }

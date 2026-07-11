@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from navbe_core.agent import WorkflowAgent
+from navbe_core.live_url import live_process_url
 from pydantic import BaseModel
 
 from navbe_mcp.registry import register
@@ -20,6 +21,7 @@ class ProcessStatusResult(BaseModel):
     next_run: str | None = None
     watermark: str | None = None
     last_run: dict | None = None
+    live_url: str | None = None
     next_step: str = ""
 
 
@@ -36,6 +38,7 @@ def _get_process_status(agent: WorkflowAgent, user_id: str, process_slug: str) -
 
     last_run = agent.repo.get_last_run(workflow.id)
     last_run_payload = None
+    live_url = None
     if last_run is not None:
         last_run_payload = {
             "run_id": last_run.id,
@@ -44,6 +47,14 @@ def _get_process_status(agent: WorkflowAgent, user_id: str, process_slug: str) -
             "completed_at": last_run.completed_at.isoformat() if last_run.completed_at else None,
             "output": json.loads(last_run.output) if last_run.output else None,
         }
+        live_url = live_process_url(workflow_id=workflow.id, run_id=last_run.id)
+        if last_run.status == "running":
+            next_step = f"Open live_url to watch the DAG live: {live_url}"
+        else:
+            next_step = f"Open live_url for the DAG: {live_url}"
+    else:
+        live_url = live_process_url(workflow_id=workflow.id)
+        next_step = f"Open live_url for the DAG: {live_url}"
 
     return ProcessStatusResult(
         found=True,
@@ -53,7 +64,8 @@ def _get_process_status(agent: WorkflowAgent, user_id: str, process_slug: str) -
         next_run=workflow.scheduled_at.isoformat() if workflow.scheduled_at else None,
         watermark=workflow.watermark_at.isoformat() if workflow.watermark_at else None,
         last_run=last_run_payload,
-        next_step="call pull_events after subscribe to watch live progress",
+        live_url=live_url,
+        next_step=next_step,
     ).model_dump()
 
 
@@ -62,7 +74,7 @@ register(
     fn=_get_process_status,
     description=(
         "Get the live status of a named process (workflow). Any agent can call this — "
-        "it reads shared hub state."
+        "it reads shared hub state. Returns live_url to open the Control UI DAG."
     ),
     parameters={
         "process_slug": {

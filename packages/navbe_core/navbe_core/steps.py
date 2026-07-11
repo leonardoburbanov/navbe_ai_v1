@@ -142,6 +142,54 @@ def _diff(expected: object, actual: object, path: str) -> list[dict]:
     return [{"path": path, "expected": expected, "actual": actual, "match": False}]
 
 
+def _response_texts(payload: object) -> list[str | None]:
+    """Extract agent message texts from a plan-execute style output payload."""
+    if not isinstance(payload, dict):
+        return []
+    response = payload.get("response")
+    if not isinstance(response, list):
+        return []
+    texts: list[str | None] = []
+    for item in response:
+        if isinstance(item, dict):
+            texts.append(None if item.get("text") is None else str(item.get("text")))
+        elif isinstance(item, str):
+            texts.append(item)
+        else:
+            texts.append(None)
+    return texts
+
+
+def _experiment_messages(original: object, actual: object) -> tuple[list[dict], bool]:
+    """Compare agent message texts — primary signal for replay experiments."""
+    orig = _response_texts(original)
+    act = _response_texts(actual)
+    n = max(len(orig), len(act))
+    rows: list[dict] = []
+    all_match = True
+    for i in range(n):
+        expected = orig[i] if i < len(orig) else None
+        got = act[i] if i < len(act) else None
+        match = expected == got
+        if not match:
+            all_match = False
+        rows.append(
+            {
+                "index": i,
+                "expected": expected,
+                "actual": got,
+                "match": match,
+            }
+        )
+    if n == 0:
+        expected = None if original in (None, {}) else str(original)
+        got = None if actual in (None, {}) else str(actual)
+        match = expected == got
+        rows = [{"index": 0, "expected": expected, "actual": got, "match": match}]
+        all_match = match
+    return rows, all_match
+
+
 def _decrypt_auth(auth_cfg: dict) -> dict:
     """Decrypt Fernet-wrapped token/password when saved in a workflow."""
     if not auth_cfg.get("_encrypted"):
@@ -186,6 +234,10 @@ def call_api(state: dict) -> dict:
     auth_cfg = _decrypt_auth(dict(state.get("auth") or {"type": "none"}))
     mapping = state.get("input_mapping") or {}
     body = dict(state.get("trace_input") or {})
+    # LangGraph/Langfuse agent traces wrap the HTTP payload under kwargs.request.
+    kwargs = body.get("kwargs")
+    if isinstance(kwargs, dict) and isinstance(kwargs.get("request"), dict):
+        body = dict(kwargs["request"])
     for src, dst in mapping.items():
         if src in body:
             body[dst] = body.pop(src)
@@ -224,15 +276,18 @@ def call_api(state: dict) -> dict:
 
 @step("compare_outputs")
 def compare_outputs(state: dict) -> dict:
-    """Structured JSON diff: trace output vs API response."""
+    """Structured JSON diff + experiment message report (trace vs API)."""
     original = state.get("trace_output") or {}
     actual = state.get("api_response") or {}
     diffs = _diff(original, actual, "$")
+    experiment_messages, messages_identical = _experiment_messages(original, actual)
     return {
         "compare_result": {
             "identical": len(diffs) == 0,
             "diff_count": len(diffs),
             "diffs": diffs,
+            "experiment_messages": experiment_messages,
+            "messages_identical": messages_identical,
         }
     }
 
@@ -245,10 +300,11 @@ def store_replay(state: dict) -> dict:
     from datetime import UTC, datetime
 
     dest_config = state.get("dest_config")
-    if not dest_config or not dest_config.get("db_path"):
+    if dest_config is None:
         return {"replay_id": ""}
 
-    db_path = dest_config["db_path"]
+    # Same default as write_traces / query when config omits db_path.
+    db_path = dest_config.get("db_path") or os.path.join(str(DATA_DIR), "langfuse.duckdb")
     replay_id = str(uuid.uuid4())
     con = duckdb.connect(db_path)
     try:

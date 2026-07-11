@@ -28,6 +28,19 @@ export function RunMetrics({ output }: Props) {
   const err = str(output.error);
   if (err) items.push(`error: ${err}`);
 
+  const compare = output.compare_result;
+  if (compare && typeof compare === "object") {
+    const c = compare as {
+      identical?: boolean;
+      diff_count?: number;
+      messages_identical?: boolean;
+    };
+    if (c.messages_identical === false) items.push("message differs");
+    else if (c.identical === true) items.push("experiment identical");
+    else if (typeof c.diff_count === "number")
+      items.push(`${c.diff_count} field diffs`);
+  }
+
   const known = new Set([
     "trace_count",
     "traces_written",
@@ -38,6 +51,7 @@ export function RunMetrics({ output }: Props) {
     "report_path",
     "html_path",
     "error",
+    "compare_result",
   ]);
   for (const [k, v] of Object.entries(output)) {
     if (known.has(k)) continue;

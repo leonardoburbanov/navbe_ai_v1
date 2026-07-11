@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Literal, cast
+from datetime import datetime
+from typing import Any, Literal, cast
 
 from navbe_core.agent import WorkflowAgent
 from navbe_core.graph import build_graph
+from navbe_core.live_url import live_process_url
 from navbe_core.models_replay import CompareResult, ReplayRequest, ReplayResult
 from navbe_core.secrets import encrypt
 
@@ -37,15 +39,39 @@ def _encrypt_auth(auth: dict) -> dict:
     return out
 
 
+def _run_output(state: dict, req: ReplayRequest) -> dict[str, Any]:
+    """JSON-safe run output for the Runs page (no secrets)."""
+    return {
+        "trace_id": req.trace_id,
+        "api_url": req.api_url,
+        "method": req.method,
+        "replay_id": state.get("replay_id") or "",
+        "api_status_code": state.get("api_status_code"),
+        "api_latency_ms": state.get("api_latency_ms"),
+        "compare_result": state.get("compare_result"),
+        "original_output": state.get("trace_output"),
+        "response_body": state.get("api_response"),
+    }
+
+
 def _save_replay_workflow(
-    agent: WorkflowAgent, user_id: str, req: ReplayRequest, auth_plain: dict
+    agent: WorkflowAgent,
+    user_id: str,
+    req: ReplayRequest,
+    auth_plain: dict,
+    state: dict,
 ) -> str:
-    """Persist replay as a reusable workflow IR."""
-    workflow = agent.schedule(
+    """Persist replay IR + record the inline execution as a WorkflowRun.
+
+    Does not schedule a +Ns tick — that only fires in the process that
+    registered it, so one-shot MCP/tool calls never created runs.
+    Re-run later via run_workflow / run_now.
+    """
+    workflow = agent.repo.create_workflow(
         user_id=user_id,
         name=f"Replay {req.trace_id[:8]}",
         task=f"Replay trace {req.trace_id} against {req.api_url}",
-        when="+5s",
+        scheduled_at=datetime.utcnow(),
         process_slug=f"replay_{req.trace_id[:8]}",
         context={
             "action": "graph",
@@ -53,6 +79,7 @@ def _save_replay_workflow(
             "input": {
                 "trace_id": req.trace_id,
                 "connection_id": req.connection_id,
+                "connector_id": req.connection_id,
                 "destination_id": req.destination_id,
                 "api_url": req.api_url,
                 "method": req.method,
@@ -61,6 +88,9 @@ def _save_replay_workflow(
             },
         },
     )
+    run = agent.repo.start_run(workflow.id)
+    agent.repo.complete_run(run.id, _run_output(state, req))
+    agent.repo.update_workflow_status(workflow.id, "completed")
     return workflow.id
 
 
@@ -125,7 +155,9 @@ def _replay_trace_to_api(
 
     workflow_id = None
     if req.save_as_workflow:
-        workflow_id = _save_replay_workflow(agent, user_id, req, req.auth.model_dump())
+        workflow_id = _save_replay_workflow(
+            agent, user_id, req, req.auth.model_dump(), state
+        )
 
     compare_raw = state.get("compare_result") or {
         "identical": True,
@@ -135,6 +167,18 @@ def _replay_trace_to_api(
     replay_id = state.get("replay_id")
     status_code = state.get("api_status_code")
     latency_ms = state.get("api_latency_ms")
+    from navbe_core.config import settings
+
+    live_url: str | None = None
+    if workflow_id:
+        live_url = live_process_url(workflow_id=workflow_id, page="dag")
+        next_step = f"Open live_url to watch the DAG: {live_url}"
+    elif req.destination_id:
+        live_url = f"{settings.UI_URL.rstrip('/')}/?page=replays"
+        next_step = f"Open live_url for the experiment report: {live_url}"
+    else:
+        next_step = "pass destination_id to persist results"
+
     result = ReplayResult(
         replay_id=str(replay_id) if replay_id else "",
         trace_id=req.trace_id,
@@ -142,11 +186,8 @@ def _replay_trace_to_api(
         latency_ms=float(latency_ms) if isinstance(latency_ms, (int, float, str)) else 0.0,
         compare=CompareResult.model_validate(compare_raw),
         workflow_id=workflow_id,
-        next_step=(
-            "call list_processes or open UI Replays page for stored results"
-            if req.destination_id
-            else "pass destination_id to persist results"
-        ),
+        live_url=live_url,
+        next_step=next_step,
     )
     return result.model_dump()
 

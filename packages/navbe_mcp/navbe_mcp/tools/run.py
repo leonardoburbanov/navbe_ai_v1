@@ -15,7 +15,8 @@ register(
     description=(
         "Run a workflow immediately instead of waiting for its schedule. "
         "mode='append' (default) writes new traces without duplicating ones already at the "
-        "destination; mode='overwrite' replaces the destination's existing data."
+        "destination; mode='overwrite' replaces the destination's existing data. "
+        "Returns live_url to open the Control UI DAG while/after the run."
     ),
     parameters={
         "workflow_id": {"type": "string", "description": "The workflow ID to run"},

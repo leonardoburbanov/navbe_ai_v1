@@ -502,6 +502,25 @@ def _register_routes(app: FastAPI) -> None:
             )
         return {"processes": processes}
 
+    @app.get("/api/runs/live")
+    def api_live_runs(db: Session = Depends(get_db)) -> dict:
+        """In-flight runs for Control UI live strip hydrate on page load."""
+        repo = WorkflowRepository(db)
+        rows = []
+        for run in repo.list_running_runs(limit=20):
+            wf = repo.get_workflow(run.workflow_id, user_id=None)
+            rows.append(
+                {
+                    "run_id": run.id,
+                    "workflow_id": run.workflow_id,
+                    "process_slug": wf.process_slug if wf else None,
+                    "status": run.status,
+                    "step": None,
+                    "started_at": run.started_at.isoformat(),
+                }
+            )
+        return {"runs": rows}
+
     @app.get("/api/runs/{workflow_id}")
     def api_runs(
         workflow_id: str,

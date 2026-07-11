@@ -1,9 +1,9 @@
 import { statusColor } from "../statusColors";
 
-type Props = { status: string };
+type Props = { status: string; pulse?: boolean };
 
 /** Colored status pill for process/run rows. */
-export function StatusBadge({ status }: Props) {
+export function StatusBadge({ status, pulse = false }: Props) {
   const color = statusColor(status === "completed" ? "succeeded" : status);
   return (
     <span
@@ -17,6 +17,8 @@ export function StatusBadge({ status }: Props) {
         color: "#0f172a",
         background: `${color}33`,
         border: `1px solid ${color}`,
+        boxShadow: pulse ? `0 0 0 2px ${color}44` : "none",
+        animation: pulse ? "navbe-pulse 1.4s ease-in-out infinite" : "none",
       }}
     >
       {status}

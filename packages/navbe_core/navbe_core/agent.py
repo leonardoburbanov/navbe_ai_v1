@@ -8,6 +8,7 @@ from navbe_scheduler.scheduler import APSchedulerAdapter, ScheduleParser
 
 from navbe_core.config import DATA_DIR
 from navbe_core.graph import build_graph
+from navbe_core.live_url import live_process_url
 from navbe_core.models import SessionLocal, WorkflowModel
 from navbe_core.query import DEFAULT_PAGE_SIZE, query_destination
 from navbe_core.repository import WorkflowRepository
@@ -270,6 +271,7 @@ class WorkflowAgent:
 
         run = self.repo.start_run(workflow_id)
         start_type = "run.preview.started" if is_preview else "run.started"
+        live_url = live_process_url(workflow_id=workflow_id, run_id=run.id, page="dag")
         events.publish(
             f"run.{run.id}",
             start_type,
@@ -277,11 +279,18 @@ class WorkflowAgent:
                 "workflow_id": workflow_id,
                 "run_id": run.id,
                 "process_slug": workflow.process_slug,
+                "status": "running",
+                "live_url": live_url,
             },
         )
         try:
             output = self._execute(
-                workflow, self.repo, mode=exec_mode, preview=is_preview, preview_path=preview_path
+                workflow,
+                self.repo,
+                mode=exec_mode,
+                preview=is_preview,
+                preview_path=preview_path,
+                run_id=run.id,
             )
             self.repo.complete_run(run.id, output)
             if is_preview:
@@ -292,6 +301,8 @@ class WorkflowAgent:
                         "workflow_id": workflow_id,
                         "run_id": run.id,
                         "process_slug": workflow.process_slug,
+                        "status": "completed",
+                        "live_url": live_url,
                         "output": output,
                     },
                 )
@@ -304,14 +315,20 @@ class WorkflowAgent:
                         "workflow_id": workflow_id,
                         "run_id": run.id,
                         "process_slug": workflow.process_slug,
+                        "status": "completed",
+                        "live_url": live_url,
                         "output": output,
                     },
                 )
             return {
                 "run_id": run.id,
+                "workflow_id": workflow_id,
+                "process_slug": workflow.process_slug,
                 "status": "completed",
                 "output": output,
                 "preview": is_preview,
+                "live_url": live_url,
+                "next_step": f"Open live_url to review the DAG: {live_url}",
             }
         except Exception as e:
             self.repo.fail_run(run.id, str(e))
@@ -322,6 +339,8 @@ class WorkflowAgent:
                     "workflow_id": workflow_id,
                     "run_id": run.id,
                     "process_slug": workflow.process_slug,
+                    "status": "failed",
+                    "live_url": live_url,
                     "error": str(e),
                 },
             )
@@ -338,6 +357,7 @@ class WorkflowAgent:
         mode: str = "append",
         preview: bool = False,
         preview_path: Path | None = None,
+        run_id: str | None = None,
     ) -> dict:
         """Produce this workflow's run output. Most workflows are generic
         (AI-agent tasks with no real side effect here); `graph` DAG
@@ -360,31 +380,30 @@ class WorkflowAgent:
             state = {**initial, "workflow_id": workflow.id, "mode": mode}
             if workflow.process_slug:
                 state["process_slug"] = workflow.process_slug
+            if run_id:
+                state["run_id"] = run_id
             for update in compiled.stream(state, stream_mode="updates"):
                 for step_name, step_state in update.items():
                     # ponytail: updates stream fires after the node finishes — started
                     # is best-effort for UI sequencing; true mid-step running needs
                     # per-step publish inside handlers → astream_events.
+                    step_payload = {
+                        "step": step_name,
+                        "workflow_id": workflow.id,
+                        "run_id": run_id,
+                        "status": "running",
+                        "process_slug": workflow.process_slug,
+                    }
                     events.publish(
-                        f"run.{workflow.id}",
+                        f"run.{run_id or workflow.id}",
                         "run.step.started",
-                        {
-                            "step": step_name,
-                            "workflow_id": workflow.id,
-                            "status": "running",
-                            "process_slug": workflow.process_slug,
-                        },
+                        step_payload,
                     )
                     state = step_state
                     events.publish(
-                        f"run.{workflow.id}",
+                        f"run.{run_id or workflow.id}",
                         "run.step",
-                        {
-                            "step": step_name,
-                            "workflow_id": workflow.id,
-                            "status": "succeeded",
-                            "process_slug": workflow.process_slug,
-                        },
+                        {**step_payload, "status": "succeeded"},
                     )
             return state
 
@@ -400,7 +419,8 @@ class WorkflowAgent:
         through a tool response.
         """
         resolved = dict(input_)
-        connector_id = resolved.pop("connector_id", None)
+        # Replay IR uses connection_id; export IR uses connector_id — accept both.
+        connector_id = resolved.pop("connector_id", None) or resolved.pop("connection_id", None)
         if connector_id is not None:
             connector = repo.get_connector(connector_id, user_id)
             if connector is None:
@@ -447,6 +467,7 @@ class WorkflowAgent:
             workflow = repo.get_workflow(workflow_id, user_id=None)
             if workflow is None:
                 raise ValueError(f"Workflow not found: {workflow_id}")
+            live_url = live_process_url(workflow_id=workflow_id, run_id=run.id)
             events.publish(
                 f"run.{run.id}",
                 "run.started",
@@ -454,9 +475,11 @@ class WorkflowAgent:
                     "workflow_id": workflow_id,
                     "run_id": run.id,
                     "process_slug": workflow.process_slug,
+                    "status": "running",
+                    "live_url": live_url,
                 },
             )
-            output = self._execute(workflow, repo)
+            output = self._execute(workflow, repo, run_id=run.id)
             repo.complete_run(run.id, output)
             self._advance_watermark(workflow_id, output, repo=repo)
             events.publish(
@@ -466,6 +489,8 @@ class WorkflowAgent:
                     "workflow_id": workflow_id,
                     "run_id": run.id,
                     "process_slug": workflow.process_slug,
+                    "status": "completed",
+                    "live_url": live_url,
                     "output": output,
                 },
             )
@@ -498,7 +523,9 @@ class WorkflowAgent:
                     "workflow_id": workflow_id,
                     "run_id": run.id,
                     "error": str(e),
+                    "status": "failed",
                     "process_slug": workflow.process_slug if workflow else None,
+                    "live_url": live_process_url(workflow_id=workflow_id, run_id=run.id),
                 },
             )
         finally:

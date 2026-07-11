@@ -39,12 +39,23 @@ class DiffEntry(BaseModel):
     match: bool = False
 
 
+class ExperimentMessageDiff(BaseModel):
+    """Agent message text comparison — the main experiment signal."""
+
+    index: int
+    expected: str | None = None
+    actual: str | None = None
+    match: bool = False
+
+
 class CompareResult(BaseModel):
     """Structured diff between trace output and API response."""
 
     identical: bool
     diff_count: int
     diffs: list[DiffEntry]
+    experiment_messages: list[ExperimentMessageDiff] = Field(default_factory=list)
+    messages_identical: bool = True
 
 
 class ReplayResult(BaseModel):
@@ -56,4 +67,5 @@ class ReplayResult(BaseModel):
     latency_ms: float
     compare: CompareResult
     workflow_id: str | None = None
+    live_url: str | None = None
     next_step: str

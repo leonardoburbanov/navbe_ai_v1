@@ -86,6 +86,13 @@ export type ReplayRow = {
     identical?: boolean;
     diff_count?: number;
     diffs?: Array<{ path: string; expected: unknown; actual: unknown }>;
+    experiment_messages?: Array<{
+      index: number;
+      expected?: string | null;
+      actual?: string | null;
+      match?: boolean;
+    }>;
+    messages_identical?: boolean;
   } | null;
   ts: string;
   destination_id?: string;
@@ -150,6 +157,20 @@ export function fetchReplays(
 ): Promise<{ replays: ReplayRow[] }> {
   const q = workflowId ? `?workflow_id=${encodeURIComponent(workflowId)}` : "";
   return getJson(`/api/replays${q}`);
+}
+
+export type LiveRunApiRow = {
+  run_id: string;
+  workflow_id: string;
+  process_slug: string | null;
+  status: string;
+  step: string | null;
+  started_at: string;
+};
+
+/** In-flight runs for Live strip hydrate. */
+export function fetchLiveRuns(): Promise<{ runs: LiveRunApiRow[] }> {
+  return getJson("/api/runs/live");
 }
 
 /** Run a read-only SELECT against a workflow's destination (paginated). */

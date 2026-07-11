@@ -177,6 +177,16 @@ class WorkflowRepository:
             .count()
         )
 
+    def list_running_runs(self, limit: int = 20) -> list[WorkflowRunModel]:
+        """In-flight runs for Control UI live strip hydrate."""
+        return (
+            self.db.query(WorkflowRunModel)
+            .filter(WorkflowRunModel.status == "running")
+            .order_by(WorkflowRunModel.started_at.desc())
+            .limit(limit)
+            .all()
+        )
+
     # -- connectors --------------------------------------------------------
 
     def create_connector(

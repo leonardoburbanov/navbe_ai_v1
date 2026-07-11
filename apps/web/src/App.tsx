@@ -1,6 +1,14 @@
-import { type CSSProperties, useCallback, useEffect, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { fetchLiveRuns } from "./api/client";
 import { handleSsePayload, useSSE } from "./api/sse";
 import { HealthBar } from "./components/HealthBar";
+import { LiveRunsStrip } from "./components/LiveRunsStrip";
 import { ProcessSelector } from "./components/ProcessSelector";
 import { CatalogPage } from "./pages/CatalogPage";
 import { DagPage } from "./pages/DagPage";
@@ -10,6 +18,7 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { RunsPage } from "./pages/RunsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useDagStore } from "./store/dagStore";
+import { useLiveRunStore } from "./store/liveRunStore";
 import { useProcessStore } from "./store/processStore";
 
 type Page =
@@ -31,19 +40,32 @@ const PAGES: Page[] = [
   "settings",
 ];
 
-function readUrlState(): { page: Page; workflowId: string | null } {
+function readUrlState(): {
+  page: Page;
+  workflowId: string | null;
+  runId: string | null;
+} {
   const params = new URLSearchParams(window.location.search);
   const pageRaw = params.get("page") ?? "processes";
   const page = (
     PAGES.includes(pageRaw as Page) ? pageRaw : "processes"
   ) as Page;
-  return { page, workflowId: params.get("workflow") };
+  return {
+    page,
+    workflowId: params.get("workflow"),
+    runId: params.get("run"),
+  };
 }
 
-function writeUrlState(page: Page, workflowId: string | null) {
+function writeUrlState(
+  page: Page,
+  workflowId: string | null,
+  runId: string | null,
+) {
   const params = new URLSearchParams();
   params.set("page", page);
   if (workflowId) params.set("workflow", workflowId);
+  if (runId) params.set("run", runId);
   const next = `${window.location.pathname}?${params.toString()}`;
   window.history.replaceState(null, "", next);
 }
@@ -64,6 +86,7 @@ export default function App() {
   const [workflowId, setWorkflowId] = useState<string | null>(
     initial.workflowId,
   );
+  const [runId, setRunId] = useState<string | null>(initial.runId);
   const [processSlug, setProcessSlug] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [navHint, setNavHint] = useState<string | null>(null);
@@ -72,10 +95,56 @@ export default function App() {
   const patchStep = useDagStore((s) => s.patchStep);
   const resetRun = useDagStore((s) => s.resetRun);
   const patchStatus = useProcessStore((s) => s.patchStatus);
+  const liveUpsert = useLiveRunStore((s) => s.upsert);
+  const liveSetStep = useLiveRunStore((s) => s.setStep);
+  const liveComplete = useLiveRunStore((s) => s.complete);
+  const liveFail = useLiveRunStore((s) => s.fail);
+  const liveDismiss = useLiveRunStore((s) => s.dismiss);
+  const liveHydrate = useLiveRunStore((s) => s.hydrate);
+  const liveRunsMap = useLiveRunStore((s) => s.runs);
+
+  const liveRuns = useMemo(() => {
+    const rows = Object.values(liveRunsMap);
+    rows.sort((a, b) => b.updatedAt - a.updatedAt);
+    return rows;
+  }, [liveRunsMap]);
 
   useEffect(() => {
-    writeUrlState(page, workflowId);
-  }, [page, workflowId]);
+    writeUrlState(page, workflowId, runId);
+  }, [page, workflowId, runId]);
+
+  useEffect(() => {
+    fetchLiveRuns()
+      .then((r) => {
+        liveHydrate(
+          (r.runs ?? []).map((row) => ({
+            runId: row.run_id,
+            workflowId: row.workflow_id,
+            processSlug: row.process_slug,
+            status: "running" as const,
+            step: row.step,
+            startedAt: Date.parse(row.started_at) || Date.now(),
+            updatedAt: Date.now(),
+          })),
+        );
+      })
+      .catch(() => {
+        /* daemon may be down — HealthBar covers that */
+      });
+  }, [liveHydrate]);
+
+  // Drop settled runs from the strip after 30s.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      for (const r of Object.values(useLiveRunStore.getState().runs)) {
+        if (r.status !== "running" && now - r.updatedAt > 30_000) {
+          useLiveRunStore.getState().dismiss(r.runId);
+        }
+      }
+    }, 5_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const onSse = useCallback(
     (e: MessageEvent) => {
@@ -84,23 +153,34 @@ export default function App() {
         const event = JSON.parse(e.data) as {
           type?: string;
           workflow_id?: string;
+          run_id?: string;
+          process_slug?: string;
           step?: string;
         };
-        handleSsePayload(event, { patchStep, resetRun });
-        if (event.workflow_id && event.type === "run.started") {
-          patchStatus(event.workflow_id, "running");
-        }
-        if (event.workflow_id && event.type === "run.succeeded") {
-          patchStatus(event.workflow_id, "completed");
-        }
-        if (event.workflow_id && event.type === "run.failed") {
-          patchStatus(event.workflow_id, "failed");
-        }
+        handleSsePayload(
+          event,
+          { patchStep, resetRun },
+          {
+            upsert: liveUpsert,
+            setStep: liveSetStep,
+            complete: liveComplete,
+            fail: liveFail,
+          },
+          { patchStatus },
+        );
       } catch {
         // ignore malformed keepalive / non-JSON
       }
     },
-    [patchStep, resetRun, patchStatus],
+    [
+      patchStep,
+      resetRun,
+      patchStatus,
+      liveUpsert,
+      liveSetStep,
+      liveComplete,
+      liveFail,
+    ],
   );
 
   useSSE("/events/sse", onSse, {
@@ -126,8 +206,9 @@ export default function App() {
     setPage(next);
   };
 
-  const openDag = (id: string, slug: string) => {
+  const openDag = (id: string, slug: string, nextRunId?: string) => {
     selectProcess(id, slug);
+    setRunId(nextRunId ?? null);
     setPage("dag");
   };
   const openRuns = (id: string, slug: string) => {
@@ -173,6 +254,11 @@ export default function App() {
         <div style={{ marginBottom: 8 }}>
           <ProcessSelector workflowId={workflowId} onSelect={selectProcess} />
         </div>
+        <LiveRunsStrip
+          runs={liveRuns}
+          onOpen={(id, slug, rid) => openDag(id, slug, rid)}
+          onDismiss={liveDismiss}
+        />
         {navHint && (
           <p style={{ color: "#b45309", fontSize: 13, margin: "0 0 8px" }}>
             {navHint}
@@ -225,7 +311,11 @@ export default function App() {
           <ReportsPage workflowId={workflowId} initialTemplateId={templateId} />
         )}
         {page === "dag" && workflowId && (
-          <DagPage workflowId={workflowId} processSlug={processSlug} />
+          <DagPage
+            workflowId={workflowId}
+            processSlug={processSlug}
+            runId={runId}
+          />
         )}
         {page === "dag" && !workflowId && (
           <p style={{ color: "#64748b" }}>Select a process to view its DAG.</p>
