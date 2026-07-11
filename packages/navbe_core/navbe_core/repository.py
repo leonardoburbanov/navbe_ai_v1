@@ -138,6 +138,7 @@ class WorkflowRepository:
                 "status": "completed",
                 "completed_at": datetime.utcnow(),
                 "output": json.dumps(output),
+                "control": None,
             }
         )
         self.db.commit()
@@ -148,7 +149,49 @@ class WorkflowRepository:
                 "status": "failed",
                 "completed_at": datetime.utcnow(),
                 "error": error,
+                "control": None,
             }
+        )
+        self.db.commit()
+
+    def get_run(self, run_id: str) -> WorkflowRunModel | None:
+        return self.db.query(WorkflowRunModel).filter(WorkflowRunModel.id == run_id).first()
+
+    def set_run_control(self, run_id: str, control: str | None) -> WorkflowRunModel | None:
+        """Request pause/cancel (or clear). Returns the run if found."""
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+        run.control = control
+        self.db.commit()
+        self.db.refresh(run)
+        return run
+
+    def mark_run_paused(self, run_id: str, output: dict) -> None:
+        self.db.query(WorkflowRunModel).filter(WorkflowRunModel.id == run_id).update(
+            {
+                "status": "paused",
+                "control": None,
+                "output": json.dumps(output),
+            }
+        )
+        self.db.commit()
+
+    def mark_run_cancelled(self, run_id: str, output: dict | None = None) -> None:
+        payload: dict = {
+            "status": "cancelled",
+            "completed_at": datetime.utcnow(),
+            "control": None,
+            "error": "cancelled by user",
+        }
+        if output is not None:
+            payload["output"] = json.dumps(output)
+        self.db.query(WorkflowRunModel).filter(WorkflowRunModel.id == run_id).update(payload)
+        self.db.commit()
+
+    def mark_run_running(self, run_id: str) -> None:
+        self.db.query(WorkflowRunModel).filter(WorkflowRunModel.id == run_id).update(
+            {"status": "running", "control": None}
         )
         self.db.commit()
 
@@ -181,11 +224,32 @@ class WorkflowRepository:
         """In-flight runs for Control UI live strip hydrate."""
         return (
             self.db.query(WorkflowRunModel)
-            .filter(WorkflowRunModel.status == "running")
+            .filter(WorkflowRunModel.status.in_(("running", "paused")))
             .order_by(WorkflowRunModel.started_at.desc())
             .limit(limit)
             .all()
         )
+
+    def list_runs_for_user(
+        self,
+        user_id: str,
+        process_slug: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[tuple[WorkflowRunModel, WorkflowModel]], int]:
+        """Cross-process runs for the Runs-first UI. Returns [(run, workflow), total]."""
+        q = (
+            self.db.query(WorkflowRunModel, WorkflowModel)
+            .join(WorkflowModel, WorkflowRunModel.workflow_id == WorkflowModel.id)
+            .filter(WorkflowModel.user_id == user_id)
+        )
+        if process_slug:
+            q = q.filter(WorkflowModel.process_slug == process_slug)
+        total = q.count()
+        rows = (
+            q.order_by(WorkflowRunModel.started_at.desc()).offset(offset).limit(limit).all()
+        )
+        return rows, total
 
     # -- connectors --------------------------------------------------------
 

@@ -33,8 +33,12 @@ const NODE_TYPES: NodeTypes = {
 
 type Props = {
   workflowId: string;
+  /** When set, node colors come from this run's SSE/seeded status. */
+  runId?: string | null;
   selectedStep: string | null;
   onSelectStep: (step: string | null) => void;
+  /** Compact height for the left sheet. */
+  height?: number;
 };
 
 /** Fit viewport once React Flow has measured custom nodes. */
@@ -48,13 +52,20 @@ function FitViewOnReady() {
 }
 
 /** Read-only React Flow canvas with live SSE status overlay. */
-function NavbeFlowInner({ workflowId, selectedStep, onSelectStep }: Props) {
+function NavbeFlowInner({
+  workflowId,
+  runId,
+  selectedStep,
+  onSelectStep,
+  height = 560,
+}: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const statusKey = runId || workflowId;
   // Stable selector — never `?? {}` (new object each render → setNodes loop → blank canvas).
-  const nodeStatus = useDagStore((s) => s.nodeStatus[workflowId]);
+  const nodeStatus = useDagStore((s) => s.nodeStatus[statusKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,7 +122,7 @@ function NavbeFlowInner({ workflowId, selectedStep, onSelectStep }: Props) {
     return (
       <div
         style={{
-          height: 560,
+          height,
           border: "1px solid #e2e8f0",
           borderRadius: 8,
           display: "flex",
@@ -129,7 +140,7 @@ function NavbeFlowInner({ workflowId, selectedStep, onSelectStep }: Props) {
     return (
       <div
         style={{
-          height: 240,
+          height: Math.min(height, 240),
           border: "1px dashed #cbd5e1",
           borderRadius: 8,
           display: "flex",
@@ -146,7 +157,7 @@ function NavbeFlowInner({ workflowId, selectedStep, onSelectStep }: Props) {
   }
 
   return (
-    <div style={{ height: 560, border: "1px solid #e2e8f0", borderRadius: 8 }}>
+    <div style={{ height, border: "1px solid #e2e8f0", borderRadius: 8 }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}

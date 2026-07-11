@@ -9,7 +9,7 @@ def live_process_url(
     *,
     workflow_id: str,
     run_id: str | None = None,
-    page: str = "dag",
+    page: str = "runs",
 ) -> str:
     """Absolute Control UI deep link for a live (or just-started) run."""
     q = f"page={page}&workflow={workflow_id}"

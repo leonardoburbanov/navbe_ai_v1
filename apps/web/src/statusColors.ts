@@ -5,13 +5,21 @@ export const STATUS_COLORS = {
   succeeded: "#22c55e",
   failed: "#ef4444",
   skipped: "#d1d5db",
+  paused: "#f59e0b",
+  cancelled: "#78716c",
 } as const;
 
-export type NodeStatus = keyof typeof STATUS_COLORS;
+export type NodeStatus =
+  | "idle"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "skipped";
 
 export function statusColor(status: string | undefined): string {
   if (status && status in STATUS_COLORS) {
-    return STATUS_COLORS[status as NodeStatus];
+    return STATUS_COLORS[status as keyof typeof STATUS_COLORS];
   }
+  if (status === "completed") return STATUS_COLORS.succeeded;
   return STATUS_COLORS.idle;
 }

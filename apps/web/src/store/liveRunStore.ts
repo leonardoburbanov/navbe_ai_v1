@@ -4,7 +4,7 @@ export type LiveRun = {
   runId: string;
   workflowId: string;
   processSlug: string | null;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "paused" | "cancelled";
   step: string | null;
   startedAt: number;
   updatedAt: number;
@@ -22,6 +22,8 @@ interface LiveRunStore {
   setStep: (runId: string, step: string) => void;
   complete: (runId: string) => void;
   fail: (runId: string) => void;
+  pause: (runId: string) => void;
+  cancel: (runId: string) => void;
   dismiss: (runId: string) => void;
   hydrate: (rows: LiveRun[]) => void;
   isWorkflowLive: (workflowId: string) => boolean;
@@ -83,6 +85,28 @@ export const useLiveRunStore = create<LiveRunStore>((set, get) => ({
         },
       };
     }),
+  pause: (runId) =>
+    set((s) => {
+      const prev = s.runs[runId];
+      if (!prev) return s;
+      return {
+        runs: {
+          ...s.runs,
+          [runId]: { ...prev, status: "paused", updatedAt: Date.now() },
+        },
+      };
+    }),
+  cancel: (runId) =>
+    set((s) => {
+      const prev = s.runs[runId];
+      if (!prev) return s;
+      return {
+        runs: {
+          ...s.runs,
+          [runId]: { ...prev, status: "cancelled", updatedAt: Date.now() },
+        },
+      };
+    }),
   dismiss: (runId) =>
     set((s) => {
       const next = { ...s.runs };
@@ -99,6 +123,8 @@ export const useLiveRunStore = create<LiveRunStore>((set, get) => ({
     }),
   isWorkflowLive: (workflowId) =>
     Object.values(get().runs).some(
-      (r) => r.workflowId === workflowId && r.status === "running",
+      (r) =>
+        r.workflowId === workflowId &&
+        (r.status === "running" || r.status === "paused"),
     ),
 }));

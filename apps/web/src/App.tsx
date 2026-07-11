@@ -9,11 +9,6 @@ import { fetchLiveRuns } from "./api/client";
 import { handleSsePayload, useSSE } from "./api/sse";
 import { HealthBar } from "./components/HealthBar";
 import { LiveRunsStrip } from "./components/LiveRunsStrip";
-import { ProcessSelector } from "./components/ProcessSelector";
-import { CatalogPage } from "./pages/CatalogPage";
-import { DagPage } from "./pages/DagPage";
-import { ProcessesPage } from "./pages/ProcessesPage";
-import { ReplaysPage } from "./pages/ReplaysPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { RunsPage } from "./pages/RunsPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -21,24 +16,9 @@ import { useDagStore } from "./store/dagStore";
 import { useLiveRunStore } from "./store/liveRunStore";
 import { useProcessStore } from "./store/processStore";
 
-type Page =
-  | "processes"
-  | "runs"
-  | "catalog"
-  | "dag"
-  | "replays"
-  | "reports"
-  | "settings";
+type Page = "runs" | "reports" | "settings";
 
-const PAGES: Page[] = [
-  "processes",
-  "runs",
-  "dag",
-  "catalog",
-  "reports",
-  "replays",
-  "settings",
-];
+const PAGES: Page[] = ["runs", "reports", "settings"];
 
 function readUrlState(): {
   page: Page;
@@ -46,9 +26,10 @@ function readUrlState(): {
   runId: string | null;
 } {
   const params = new URLSearchParams(window.location.search);
-  const pageRaw = params.get("page") ?? "processes";
+  const pageRaw = params.get("page") ?? "runs";
+  // Legacy deep links (dag/processes/replays/catalog) land on Runs.
   const page = (
-    PAGES.includes(pageRaw as Page) ? pageRaw : "processes"
+    PAGES.includes(pageRaw as Page) ? pageRaw : "runs"
   ) as Page;
   return {
     page,
@@ -89,7 +70,6 @@ export default function App() {
   const [runId, setRunId] = useState<string | null>(initial.runId);
   const [processSlug, setProcessSlug] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
-  const [navHint, setNavHint] = useState<string | null>(null);
   const [sseOk, setSseOk] = useState(true);
 
   const patchStep = useDagStore((s) => s.patchStep);
@@ -99,6 +79,8 @@ export default function App() {
   const liveSetStep = useLiveRunStore((s) => s.setStep);
   const liveComplete = useLiveRunStore((s) => s.complete);
   const liveFail = useLiveRunStore((s) => s.fail);
+  const livePause = useLiveRunStore((s) => s.pause);
+  const liveCancel = useLiveRunStore((s) => s.cancel);
   const liveDismiss = useLiveRunStore((s) => s.dismiss);
   const liveHydrate = useLiveRunStore((s) => s.hydrate);
   const liveRunsMap = useLiveRunStore((s) => s.runs);
@@ -117,15 +99,23 @@ export default function App() {
     fetchLiveRuns()
       .then((r) => {
         liveHydrate(
-          (r.runs ?? []).map((row) => ({
-            runId: row.run_id,
-            workflowId: row.workflow_id,
-            processSlug: row.process_slug,
-            status: "running" as const,
-            step: row.step,
-            startedAt: Date.parse(row.started_at) || Date.now(),
-            updatedAt: Date.now(),
-          })),
+          (r.runs ?? []).map((row) => {
+            const st =
+              row.status === "paused"
+                ? ("paused" as const)
+                : row.status === "cancelled"
+                  ? ("cancelled" as const)
+                  : ("running" as const);
+            return {
+              runId: row.run_id,
+              workflowId: row.workflow_id,
+              processSlug: row.process_slug,
+              status: st,
+              step: row.step,
+              startedAt: Date.parse(row.started_at) || Date.now(),
+              updatedAt: Date.now(),
+            };
+          }),
         );
       })
       .catch(() => {
@@ -133,12 +123,15 @@ export default function App() {
       });
   }, [liveHydrate]);
 
-  // Drop settled runs from the strip after 30s.
   useEffect(() => {
     const id = window.setInterval(() => {
       const now = Date.now();
       for (const r of Object.values(useLiveRunStore.getState().runs)) {
-        if (r.status !== "running" && now - r.updatedAt > 30_000) {
+        if (
+          r.status !== "running" &&
+          r.status !== "paused" &&
+          now - r.updatedAt > 30_000
+        ) {
           useLiveRunStore.getState().dismiss(r.runId);
         }
       }
@@ -165,6 +158,8 @@ export default function App() {
             setStep: liveSetStep,
             complete: liveComplete,
             fail: liveFail,
+            pause: livePause,
+            cancel: liveCancel,
           },
           { patchStatus },
         );
@@ -180,6 +175,8 @@ export default function App() {
       liveSetStep,
       liveComplete,
       liveFail,
+      livePause,
+      liveCancel,
     ],
   );
 
@@ -188,41 +185,15 @@ export default function App() {
     onOpen: () => setSseOk(true),
   });
 
-  const selectProcess = (id: string, slug: string) => {
+  const selectProcess = useCallback((id: string | null, slug: string) => {
     setWorkflowId(id);
     setProcessSlug(slug);
-    setNavHint(null);
-  };
+  }, []);
 
-  const go = (next: Page) => {
-    if ((next === "runs" || next === "dag") && !workflowId) {
-      setNavHint(
-        "Select a process in the header (or open one from Processes).",
-      );
-      setPage("processes");
-      return;
-    }
-    setNavHint(null);
-    setPage(next);
-  };
-
-  const openDag = (id: string, slug: string, nextRunId?: string) => {
+  const openRunSheet = (id: string, slug: string, nextRunId?: string) => {
     selectProcess(id, slug);
     setRunId(nextRunId ?? null);
-    setPage("dag");
-  };
-  const openRuns = (id: string, slug: string) => {
-    selectProcess(id, slug);
     setPage("runs");
-  };
-  const openReports = (id: string, slug: string, tplId?: string) => {
-    selectProcess(id, slug);
-    setTemplateId(tplId ?? null);
-    setPage("reports");
-  };
-  const openReportsFromCatalog = (tplId: string) => {
-    setTemplateId(tplId);
-    setPage("reports");
   };
 
   return (
@@ -248,31 +219,19 @@ export default function App() {
           Navbe
         </div>
         <p style={{ margin: "4px 0 8px", color: "#64748b", fontSize: 14 }}>
-          Control cockpit — processes, runs, DAG, integrations, reports
+          Control cockpit — runs, reports, settings
         </p>
         <HealthBar sseOk={sseOk} />
-        <div style={{ marginBottom: 8 }}>
-          <ProcessSelector workflowId={workflowId} onSelect={selectProcess} />
-        </div>
         <LiveRunsStrip
           runs={liveRuns}
-          onOpen={(id, slug, rid) => openDag(id, slug, rid)}
+          onOpen={(id, slug, rid) => openRunSheet(id, slug, rid)}
           onDismiss={liveDismiss}
         />
-        {navHint && (
-          <p style={{ color: "#b45309", fontSize: 13, margin: "0 0 8px" }}>
-            {navHint}
-          </p>
-        )}
         <nav style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {(
             [
-              ["processes", "Processes"],
               ["runs", "Runs"],
-              ["dag", "DAG"],
-              ["catalog", "Integrations"],
               ["reports", "Reports"],
-              ["replays", "Replays"],
               ["settings", "Settings"],
             ] as const
           ).map(([key, label]) => (
@@ -280,7 +239,7 @@ export default function App() {
               key={key}
               type="button"
               style={navBtn(page === key)}
-              onClick={() => go(key)}
+              onClick={() => setPage(key)}
             >
               {label}
             </button>
@@ -291,37 +250,26 @@ export default function App() {
       <main
         style={{ padding: "1.5rem 2rem", maxWidth: 1100, margin: "0 auto" }}
       >
-        {page === "processes" && (
-          <ProcessesPage
-            onOpenDag={openDag}
-            onOpenRuns={openRuns}
-            onOpenReports={openReports}
+        {page === "runs" && (
+          <RunsPage
+            processSlug={processSlug || null}
+            workflowId={workflowId}
+            initialRunId={runId}
+            onSelectProcess={selectProcess}
+            onSelectRun={setRunId}
           />
-        )}
-        {page === "runs" && workflowId && (
-          <RunsPage workflowId={workflowId} processSlug={processSlug} />
-        )}
-        {page === "runs" && !workflowId && (
-          <p style={{ color: "#64748b" }}>Select a process to view runs.</p>
-        )}
-        {page === "catalog" && (
-          <CatalogPage onOpenReports={openReportsFromCatalog} />
         )}
         {page === "reports" && (
           <ReportsPage workflowId={workflowId} initialTemplateId={templateId} />
         )}
-        {page === "dag" && workflowId && (
-          <DagPage
-            workflowId={workflowId}
-            processSlug={processSlug}
-            runId={runId}
+        {page === "settings" && (
+          <SettingsPage
+            onOpenReports={(tplId) => {
+              setTemplateId(tplId);
+              setPage("reports");
+            }}
           />
         )}
-        {page === "dag" && !workflowId && (
-          <p style={{ color: "#64748b" }}>Select a process to view its DAG.</p>
-        )}
-        {page === "replays" && <ReplaysPage workflowId={workflowId} />}
-        {page === "settings" && <SettingsPage />}
       </main>
     </div>
   );

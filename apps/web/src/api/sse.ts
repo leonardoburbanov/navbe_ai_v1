@@ -36,9 +36,9 @@ export type SseEvent = {
 };
 
 type DagActions = {
-  resetRun: (workflowId: string) => void;
+  resetRun: (scopeId: string) => void;
   patchStep: (
-    workflowId: string,
+    scopeId: string,
     step: string,
     status: "idle" | "running" | "succeeded" | "failed" | "skipped",
   ) => void;
@@ -49,17 +49,24 @@ type LiveActions = {
     runId: string;
     workflowId: string;
     processSlug?: string | null;
-    status?: "running" | "completed" | "failed";
+    status?: "running" | "completed" | "failed" | "paused" | "cancelled";
     step?: string | null;
   }) => void;
   setStep: (runId: string, step: string) => void;
   complete: (runId: string) => void;
   fail: (runId: string) => void;
+  pause?: (runId: string) => void;
+  cancel?: (runId: string) => void;
 };
 
 type ProcessActions = {
   patchStatus: (workflowId: string, status: string) => void;
 };
+
+/** Prefer run_id for DAG overlays so each run has its own node colors. */
+function dagScope(event: SseEvent): string | undefined {
+  return event.run_id || event.workflow_id;
+}
 
 /** Map a hub SSE payload to dag + live + process store actions. Pure — unit-tested. */
 export function handleSsePayload(
@@ -71,11 +78,12 @@ export function handleSsePayload(
   const wf = event.workflow_id;
   if (!wf || !event.type) return;
 
+  const scope = dagScope(event) ?? wf;
   const runId = event.run_id;
   const slug = event.process_slug ?? null;
 
   if (event.type === "run.started" || event.type === "run.preview.started") {
-    dag.resetRun(wf);
+    dag.resetRun(scope);
     process?.patchStatus(wf, "running");
     if (runId && live) {
       live.upsert({
@@ -89,7 +97,7 @@ export function handleSsePayload(
     return;
   }
   if (event.type === "run.step.started" && event.step) {
-    dag.patchStep(wf, event.step, "running");
+    dag.patchStep(scope, event.step, "running");
     if (runId && live) {
       live.upsert({
         runId,
@@ -103,7 +111,17 @@ export function handleSsePayload(
     return;
   }
   if (event.type === "run.step" && event.step) {
-    dag.patchStep(wf, event.step, "succeeded");
+    dag.patchStep(scope, event.step, "succeeded");
+    return;
+  }
+  if (event.type === "run.paused") {
+    process?.patchStatus(wf, "paused");
+    if (runId && live) live.pause?.(runId);
+    return;
+  }
+  if (event.type === "run.cancelled") {
+    process?.patchStatus(wf, "cancelled");
+    if (runId && live) live.cancel?.(runId);
     return;
   }
   if (
@@ -116,7 +134,7 @@ export function handleSsePayload(
   }
   if (event.type === "run.failed") {
     process?.patchStatus(wf, "failed");
-    if (event.step) dag.patchStep(wf, event.step, "failed");
+    if (event.step) dag.patchStep(scope, event.step, "failed");
     if (runId && live) live.fail(runId);
   }
 }

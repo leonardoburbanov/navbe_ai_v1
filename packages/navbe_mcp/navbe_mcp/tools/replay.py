@@ -60,7 +60,7 @@ def _save_replay_workflow(
     req: ReplayRequest,
     auth_plain: dict,
     state: dict,
-) -> str:
+) -> tuple[str, str]:
     """Persist replay IR + record the inline execution as a WorkflowRun.
 
     Does not schedule a +Ns tick — that only fires in the process that
@@ -91,7 +91,7 @@ def _save_replay_workflow(
     run = agent.repo.start_run(workflow.id)
     agent.repo.complete_run(run.id, _run_output(state, req))
     agent.repo.update_workflow_status(workflow.id, "completed")
-    return workflow.id
+    return workflow.id, run.id
 
 
 def _replay_trace_to_api(
@@ -154,8 +154,9 @@ def _replay_trace_to_api(
             state = step_state
 
     workflow_id = None
+    run_id = None
     if req.save_as_workflow:
-        workflow_id = _save_replay_workflow(
+        workflow_id, run_id = _save_replay_workflow(
             agent, user_id, req, req.auth.model_dump(), state
         )
 
@@ -171,11 +172,11 @@ def _replay_trace_to_api(
 
     live_url: str | None = None
     if workflow_id:
-        live_url = live_process_url(workflow_id=workflow_id, page="dag")
-        next_step = f"Open live_url to watch the DAG: {live_url}"
+        live_url = live_process_url(workflow_id=workflow_id, run_id=run_id, page="runs")
+        next_step = f"Open live_url to review the run sheet: {live_url}"
     elif req.destination_id:
-        live_url = f"{settings.UI_URL.rstrip('/')}/?page=replays"
-        next_step = f"Open live_url for the experiment report: {live_url}"
+        live_url = f"{settings.UI_URL.rstrip('/')}/?page=runs"
+        next_step = f"Open live_url for runs (filter for this replay): {live_url}"
     else:
         next_step = "pass destination_id to persist results"
 

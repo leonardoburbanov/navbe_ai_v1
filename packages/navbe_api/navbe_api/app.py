@@ -288,6 +288,33 @@ def preview_workflow(workflow_id: str) -> dict:
 
 
 @mcp.tool
+def pause_run(run_id: str) -> dict:
+    """Soft-pause a running workflow after the current step."""
+    try:
+        return _run_tool("pause_run", run_id=run_id)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def resume_run(run_id: str) -> dict:
+    """Resume a paused run."""
+    try:
+        return _run_tool("resume_run", run_id=run_id)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def stop_run(run_id: str) -> dict:
+    """Cancel a running or paused run after the current step."""
+    try:
+        return _run_tool("stop_run", run_id=run_id)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
 def configure_resend(
     api_key: str,
     from_addr: str = "onboarding@resend.dev",
@@ -520,6 +547,97 @@ def _register_routes(app: FastAPI) -> None:
                 }
             )
         return {"runs": rows}
+
+    @app.get("/api/runs")
+    def api_list_all_runs(
+        process_slug: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+        db: Session = Depends(get_db),
+    ) -> dict:
+        """Cross-process run list for the Runs-first Control UI."""
+        repo = WorkflowRepository(db)
+        offset = max(0, (page - 1) * page_size)
+        rows, total = repo.list_runs_for_user(
+            DEMO_USER_ID, process_slug=process_slug, limit=page_size, offset=offset
+        )
+        runs = []
+        for run, wf in rows:
+            output = None
+            if run.output:
+                try:
+                    output = json.loads(run.output)
+                except json.JSONDecodeError:
+                    output = None
+            runs.append(
+                {
+                    "run_id": run.id,
+                    "workflow_id": wf.id,
+                    "process_slug": wf.process_slug,
+                    "workflow_name": wf.name,
+                    "status": run.status,
+                    "control": run.control,
+                    "started_at": run.started_at.isoformat(),
+                    "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                    "error": run.error,
+                    "output": output,
+                }
+            )
+        return {"runs": runs, "page": page, "page_size": page_size, "total": total}
+
+    @app.get("/api/run/{run_id}")
+    def api_get_run(run_id: str, db: Session = Depends(get_db)) -> dict:
+        """Single run detail for the run sheet."""
+        repo = WorkflowRepository(db)
+        run = repo.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        wf = repo.get_workflow(run.workflow_id, DEMO_USER_ID)
+        output = None
+        if run.output:
+            try:
+                output = json.loads(run.output)
+            except json.JSONDecodeError:
+                output = None
+        return {
+            "run_id": run.id,
+            "workflow_id": run.workflow_id,
+            "process_slug": wf.process_slug if wf else None,
+            "workflow_name": wf.name if wf else None,
+            "status": run.status,
+            "control": run.control,
+            "started_at": run.started_at.isoformat(),
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "error": run.error,
+            "output": output,
+        }
+
+    @app.post("/api/runs/{run_id}/pause")
+    def api_pause_run(run_id: str, db: Session = Depends(get_db)) -> dict:
+        repo = WorkflowRepository(db)
+        agent = WorkflowAgent(repo, scheduler_adapter)
+        try:
+            return agent.pause_run(run_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/runs/{run_id}/resume")
+    def api_resume_run(run_id: str, db: Session = Depends(get_db)) -> dict:
+        repo = WorkflowRepository(db)
+        agent = WorkflowAgent(repo, scheduler_adapter)
+        try:
+            return agent.resume_paused_run(run_id, DEMO_USER_ID)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/runs/{run_id}/stop")
+    def api_stop_run(run_id: str, db: Session = Depends(get_db)) -> dict:
+        repo = WorkflowRepository(db)
+        agent = WorkflowAgent(repo, scheduler_adapter)
+        try:
+            return agent.stop_run(run_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @app.get("/api/runs/{workflow_id}")
     def api_runs(

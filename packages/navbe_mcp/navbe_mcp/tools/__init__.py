@@ -14,6 +14,7 @@ from navbe_mcp.tools import query as query
 from navbe_mcp.tools import recall as recall
 from navbe_mcp.tools import replay as replay
 from navbe_mcp.tools import run as run
+from navbe_mcp.tools import run_control as run_control
 from navbe_mcp.tools import runs as runs
 from navbe_mcp.tools import schedule as schedule
 from navbe_mcp.tools import subscribe as subscribe
@@ -34,6 +35,7 @@ __all__ = [
     "recall",
     "replay",
     "run",
+    "run_control",
     "runs",
     "schedule",
     "subscribe",

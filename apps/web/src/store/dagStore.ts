@@ -2,22 +2,49 @@ import { create } from "zustand";
 import type { NodeStatus } from "../statusColors";
 
 interface DagStore {
+  /** Keyed by run_id when live; falls back to workflow_id for legacy. */
   nodeStatus: Record<string, Record<string, NodeStatus>>;
-  patchStep: (workflowId: string, step: string, status: NodeStatus) => void;
-  resetRun: (workflowId: string) => void;
+  patchStep: (scopeId: string, step: string, status: NodeStatus) => void;
+  resetRun: (scopeId: string) => void;
+  seedSteps: (
+    scopeId: string,
+    steps: Array<{ id: string; status: string }>,
+  ) => void;
+}
+
+function asNodeStatus(status: string): NodeStatus {
+  if (
+    status === "running" ||
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "skipped" ||
+    status === "idle"
+  ) {
+    return status;
+  }
+  if (status === "completed") return "succeeded";
+  return "idle";
 }
 
 export const useDagStore = create<DagStore>((set) => ({
   nodeStatus: {},
-  patchStep: (wfId, step, status) =>
+  patchStep: (scopeId, step, status) =>
     set((s) => ({
       nodeStatus: {
         ...s.nodeStatus,
-        [wfId]: { ...s.nodeStatus[wfId], [step]: status },
+        [scopeId]: { ...s.nodeStatus[scopeId], [step]: status },
       },
     })),
-  resetRun: (wfId) =>
+  resetRun: (scopeId) =>
     set((s) => ({
-      nodeStatus: { ...s.nodeStatus, [wfId]: {} },
+      nodeStatus: { ...s.nodeStatus, [scopeId]: {} },
     })),
+  seedSteps: (scopeId, steps) =>
+    set((s) => {
+      const next: Record<string, NodeStatus> = {};
+      for (const step of steps) {
+        next[step.id] = asNodeStatus(step.status);
+      }
+      return { nodeStatus: { ...s.nodeStatus, [scopeId]: next } };
+    }),
 }));

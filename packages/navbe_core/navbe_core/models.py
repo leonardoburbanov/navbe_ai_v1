@@ -78,6 +78,8 @@ class WorkflowRunModel(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     workflow_id: Mapped[str] = mapped_column(String, ForeignKey("workflows.id"), nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="running")
+    # ponytail: cooperative pause/cancel between steps — null | pause_requested | cancel_requested
+    control: Mapped[str | None] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     output: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -117,6 +119,11 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE workflows ADD COLUMN process_slug VARCHAR"))
         if "watermark_at" not in cols:
             conn.execute(text("ALTER TABLE workflows ADD COLUMN watermark_at DATETIME"))
+        run_cols = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(workflow_runs)")).fetchall()
+        }
+        if "control" not in run_cols:
+            conn.execute(text("ALTER TABLE workflow_runs ADD COLUMN control VARCHAR"))
 
 
 def get_db():

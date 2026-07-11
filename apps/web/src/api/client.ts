@@ -17,7 +17,11 @@ export type ProcessRow = {
 
 export type RunRow = {
   run_id: string;
+  workflow_id?: string;
+  process_slug?: string | null;
+  workflow_name?: string | null;
   status: string;
+  control?: string | null;
   started_at: string;
   completed_at: string | null;
   error?: string | null;
@@ -113,11 +117,11 @@ async function getJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
     const detail = await res.text();
@@ -140,6 +144,36 @@ export function fetchRuns(
   pageSize = 20,
 ): Promise<{ runs: RunRow[]; page?: number; total?: number }> {
   return getJson(`/api/runs/${workflowId}?page=${page}&page_size=${pageSize}`);
+}
+
+/** Cross-process runs (Runs-first UI). Empty processSlug = all. */
+export function fetchAllRuns(
+  processSlug?: string | null,
+  page = 1,
+  pageSize = 20,
+): Promise<{ runs: RunRow[]; page?: number; total?: number }> {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (processSlug) params.set("process_slug", processSlug);
+  return getJson(`/api/runs?${params.toString()}`);
+}
+
+export function fetchRun(runId: string): Promise<RunRow> {
+  return getJson(`/api/run/${runId}`);
+}
+
+export function pauseRunApi(runId: string): Promise<Record<string, unknown>> {
+  return postJson(`/api/runs/${runId}/pause`);
+}
+
+export function resumeRunApi(runId: string): Promise<Record<string, unknown>> {
+  return postJson(`/api/runs/${runId}/resume`);
+}
+
+export function stopRunApi(runId: string): Promise<Record<string, unknown>> {
+  return postJson(`/api/runs/${runId}/stop`);
 }
 
 export function fetchCatalog(): Promise<CatalogResponse> {

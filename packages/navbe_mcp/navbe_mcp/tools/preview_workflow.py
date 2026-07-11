@@ -42,7 +42,7 @@ def _preview_workflow(agent: WorkflowAgent, user_id: str, workflow_id: str) -> d
         live_url=live_url,
         note="Watermark not advanced. Call run_workflow to execute for real.",
         next_step=(
-            f"Open live_url to review the DAG: {live_url}"
+            f"Open live_url to review the run: {live_url}"
             if live_url
             else "call run_workflow(workflow_id) for a production run"
         ),
@@ -54,7 +54,7 @@ register(
     fn=_preview_workflow,
     description=(
         "Dry-run a workflow: extracts sample rows, writes to a preview sandbox, "
-        "does not advance watermarks. Returns live_url for the Control UI DAG."
+        "does not advance watermarks. Returns live_url for the Control UI Runs sheet."
     ),
     parameters={"workflow_id": {"type": "string"}},
 )

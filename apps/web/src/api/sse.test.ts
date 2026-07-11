@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { handleSsePayload } from "./sse";
 
 describe("handleSsePayload", () => {
-  test("run.started resets the workflow and upserts live run", () => {
+  test("run.started resets by run_id and upserts live run", () => {
     const resetRun = vi.fn();
     const patchStep = vi.fn();
     const upsert = vi.fn();
@@ -18,7 +18,7 @@ describe("handleSsePayload", () => {
       { upsert, setStep: vi.fn(), complete: vi.fn(), fail: vi.fn() },
       { patchStatus },
     );
-    expect(resetRun).toHaveBeenCalledWith("wf1");
+    expect(resetRun).toHaveBeenCalledWith("r1");
     expect(upsert).toHaveBeenCalledWith({
       runId: "r1",
       workflowId: "wf1",
@@ -29,14 +29,19 @@ describe("handleSsePayload", () => {
     expect(patchStatus).toHaveBeenCalledWith("wf1", "running");
   });
 
-  test("run.step marks step succeeded", () => {
+  test("run.step marks step succeeded on run scope", () => {
     const resetRun = vi.fn();
     const patchStep = vi.fn();
     handleSsePayload(
-      { type: "run.step", workflow_id: "wf1", step: "fetch_traces" },
+      {
+        type: "run.step",
+        workflow_id: "wf1",
+        run_id: "r1",
+        step: "fetch_traces",
+      },
       { resetRun, patchStep },
     );
-    expect(patchStep).toHaveBeenCalledWith("wf1", "fetch_traces", "succeeded");
+    expect(patchStep).toHaveBeenCalledWith("r1", "fetch_traces", "succeeded");
   });
 
   test("run.step.started marks step running and updates live strip", () => {
@@ -54,7 +59,7 @@ describe("handleSsePayload", () => {
       { resetRun, patchStep },
       { upsert, setStep, complete: vi.fn(), fail: vi.fn() },
     );
-    expect(patchStep).toHaveBeenCalledWith("wf1", "write_traces", "running");
+    expect(patchStep).toHaveBeenCalledWith("r1", "write_traces", "running");
     expect(setStep).toHaveBeenCalledWith("r1", "write_traces");
   });
 
@@ -74,9 +79,43 @@ describe("handleSsePayload", () => {
       { upsert: vi.fn(), setStep: vi.fn(), complete: vi.fn(), fail },
       { patchStatus },
     );
-    expect(patchStep).toHaveBeenCalledWith("wf1", "fetch_traces", "failed");
+    expect(patchStep).toHaveBeenCalledWith("r1", "fetch_traces", "failed");
     expect(fail).toHaveBeenCalledWith("r1");
     expect(patchStatus).toHaveBeenCalledWith("wf1", "failed");
+  });
+
+  test("run.paused and run.cancelled update live strip", () => {
+    const pause = vi.fn();
+    const cancel = vi.fn();
+    const patchStatus = vi.fn();
+    handleSsePayload(
+      { type: "run.paused", workflow_id: "wf1", run_id: "r1" },
+      { resetRun: vi.fn(), patchStep: vi.fn() },
+      {
+        upsert: vi.fn(),
+        setStep: vi.fn(),
+        complete: vi.fn(),
+        fail: vi.fn(),
+        pause,
+        cancel,
+      },
+      { patchStatus },
+    );
+    expect(pause).toHaveBeenCalledWith("r1");
+    handleSsePayload(
+      { type: "run.cancelled", workflow_id: "wf1", run_id: "r1" },
+      { resetRun: vi.fn(), patchStep: vi.fn() },
+      {
+        upsert: vi.fn(),
+        setStep: vi.fn(),
+        complete: vi.fn(),
+        fail: vi.fn(),
+        pause,
+        cancel,
+      },
+      { patchStatus },
+    );
+    expect(cancel).toHaveBeenCalledWith("r1");
   });
 
   test("run.succeeded completes live run", () => {

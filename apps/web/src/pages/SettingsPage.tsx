@@ -8,9 +8,14 @@ import {
   scheduleDailyReportApi,
   sendDailyReportApi,
 } from "../api/client";
+import { CatalogPage } from "./CatalogPage";
 
-/** Resend / daily report settings for the Control UI. */
-export function SettingsPage() {
+type Props = {
+  onOpenReports?: (templateId: string) => void;
+};
+
+/** Settings hub: integrations + Resend / daily report. */
+export function SettingsPage({ onOpenReports }: Props) {
   const [status, setStatus] = useState<EmailStatus | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [fromAddr, setFromAddr] = useState("onboarding@resend.dev");
@@ -63,9 +68,14 @@ export function SettingsPage() {
     <section>
       <h2 style={{ marginTop: 0 }}>Settings</h2>
       <p style={{ color: "#64748b", fontSize: 14 }}>
-        Email delivery for daily retailer HTML reports (Resend).
+        Connectors, destinations, and email for daily retailer reports.
       </p>
 
+      <CatalogPage
+        onOpenReports={onOpenReports ?? (() => undefined)}
+      />
+
+      <h3 style={{ marginTop: 32 }}>Email</h3>
       <div
         style={{
           padding: 16,

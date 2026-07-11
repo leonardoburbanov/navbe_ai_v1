@@ -49,12 +49,12 @@ def _get_process_status(agent: WorkflowAgent, user_id: str, process_slug: str) -
         }
         live_url = live_process_url(workflow_id=workflow.id, run_id=last_run.id)
         if last_run.status == "running":
-            next_step = f"Open live_url to watch the DAG live: {live_url}"
+            next_step = f"Open live_url to watch the run live: {live_url}"
         else:
-            next_step = f"Open live_url for the DAG: {live_url}"
+            next_step = f"Open live_url for the run sheet: {live_url}"
     else:
         live_url = live_process_url(workflow_id=workflow.id)
-        next_step = f"Open live_url for the DAG: {live_url}"
+        next_step = f"Open live_url for the Runs page: {live_url}"
 
     return ProcessStatusResult(
         found=True,
@@ -74,7 +74,7 @@ register(
     fn=_get_process_status,
     description=(
         "Get the live status of a named process (workflow). Any agent can call this — "
-        "it reads shared hub state. Returns live_url to open the Control UI DAG."
+        "it reads shared hub state. Returns live_url to open the Control UI Runs sheet."
     ),
     parameters={
         "process_slug": {

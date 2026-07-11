@@ -2,7 +2,7 @@ type LiveRunRow = {
   runId: string;
   workflowId: string;
   processSlug: string | null;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "paused" | "cancelled";
   step: string | null;
   startedAt: number;
 };
@@ -17,6 +17,13 @@ function ageLabel(startedAt: number): string {
   const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m`;
+}
+
+function statusColor(status: LiveRunRow["status"]): string {
+  if (status === "failed" || status === "cancelled") return "#ef4444";
+  if (status === "completed") return "#22c55e";
+  if (status === "paused") return "#f59e0b";
+  return "#3b82f6";
 }
 
 /** Compact strip of in-flight (and just-finished) runs under the nav. */
@@ -39,12 +46,7 @@ export function LiveRunsStrip({ runs, onOpen, onDismiss }: Props) {
       </span>
       {visible.map((r) => {
         const pulse = r.status === "running";
-        const color =
-          r.status === "failed"
-            ? "#ef4444"
-            : r.status === "completed"
-              ? "#22c55e"
-              : "#3b82f6";
+        const color = statusColor(r.status);
         const label = r.processSlug || r.workflowId.slice(0, 8);
         return (
           <button
@@ -77,9 +79,12 @@ export function LiveRunsStrip({ runs, onOpen, onDismiss }: Props) {
               }}
             />
             <strong>{label}</strong>
+            {r.status === "paused" && (
+              <span style={{ color: "#b45309" }}>paused</span>
+            )}
             {r.step && <span style={{ color: "#64748b" }}>· {r.step}</span>}
             <span style={{ color: "#94a3b8" }}>{ageLabel(r.startedAt)}</span>
-            {r.status !== "running" && (
+            {r.status !== "running" && r.status !== "paused" && (
               <button
                 type="button"
                 aria-label="Dismiss"

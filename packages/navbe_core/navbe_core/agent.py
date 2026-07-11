@@ -271,7 +271,7 @@ class WorkflowAgent:
 
         run = self.repo.start_run(workflow_id)
         start_type = "run.preview.started" if is_preview else "run.started"
-        live_url = live_process_url(workflow_id=workflow_id, run_id=run.id, page="dag")
+        live_url = live_process_url(workflow_id=workflow_id, run_id=run.id, page="runs")
         events.publish(
             f"run.{run.id}",
             start_type,
@@ -292,6 +292,19 @@ class WorkflowAgent:
                 preview_path=preview_path,
                 run_id=run.id,
             )
+            # Cooperative pause/cancel leaves status already set.
+            run_row = self.repo.get_run(run.id)
+            if run_row and run_row.status in ("paused", "cancelled"):
+                return {
+                    "run_id": run.id,
+                    "workflow_id": workflow_id,
+                    "process_slug": workflow.process_slug,
+                    "status": run_row.status,
+                    "output": output,
+                    "preview": is_preview,
+                    "live_url": live_url,
+                    "next_step": f"Open live_url: {live_url}",
+                }
             self.repo.complete_run(run.id, output)
             if is_preview:
                 events.publish(
@@ -328,7 +341,7 @@ class WorkflowAgent:
                 "output": output,
                 "preview": is_preview,
                 "live_url": live_url,
-                "next_step": f"Open live_url to review the DAG: {live_url}",
+                "next_step": f"Open live_url to review the run: {live_url}",
             }
         except Exception as e:
             self.repo.fail_run(run.id, str(e))
@@ -349,6 +362,139 @@ class WorkflowAgent:
             if preview_path is not None and preview_path.exists():
                 with suppress(OSError):
                     preview_path.unlink()
+
+    def resume_paused_run(self, run_id: str, user_id: str) -> dict:
+        """Continue a paused run (re-enters graph; idempotent steps safe for sync).
+
+        ponytail: no LangGraph checkpoint mid-graph → re-run remaining from start.
+        """
+        run = self.repo.get_run(run_id)
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if run.status != "paused":
+            raise ValueError(f"Run is not paused (status={run.status})")
+        workflow = self.repo.get_workflow(run.workflow_id, user_id)
+        if workflow is None:
+            raise ValueError(f"Workflow not found: {run.workflow_id}")
+
+        self.repo.mark_run_running(run_id)
+        live_url = live_process_url(workflow_id=workflow.id, run_id=run_id)
+        events.publish(
+            f"run.{run_id}",
+            "run.started",
+            {
+                "workflow_id": workflow.id,
+                "run_id": run_id,
+                "process_slug": workflow.process_slug,
+                "status": "running",
+                "live_url": live_url,
+            },
+        )
+        try:
+            output = self._execute(workflow, self.repo, mode="append", run_id=run_id)
+            run_row = self.repo.get_run(run_id)
+            if run_row and run_row.status in ("paused", "cancelled"):
+                return {
+                    "run_id": run_id,
+                    "workflow_id": workflow.id,
+                    "process_slug": workflow.process_slug,
+                    "status": run_row.status,
+                    "output": output,
+                    "live_url": live_url,
+                    "next_step": f"Open live_url: {live_url}",
+                }
+            self.repo.complete_run(run_id, output)
+            self._advance_watermark(workflow.id, output)
+            events.publish(
+                _process_topic(workflow),
+                "run.succeeded",
+                {
+                    "workflow_id": workflow.id,
+                    "run_id": run_id,
+                    "process_slug": workflow.process_slug,
+                    "status": "completed",
+                    "live_url": live_url,
+                    "output": output,
+                },
+            )
+            return {
+                "run_id": run_id,
+                "workflow_id": workflow.id,
+                "process_slug": workflow.process_slug,
+                "status": "completed",
+                "output": output,
+                "live_url": live_url,
+                "next_step": f"Open live_url to review the run: {live_url}",
+            }
+        except Exception as e:
+            self.repo.fail_run(run_id, str(e))
+            events.publish(
+                _process_topic(workflow),
+                "run.failed",
+                {
+                    "workflow_id": workflow.id,
+                    "run_id": run_id,
+                    "process_slug": workflow.process_slug,
+                    "status": "failed",
+                    "live_url": live_url,
+                    "error": str(e),
+                },
+            )
+            raise
+
+    def pause_run(self, run_id: str) -> dict:
+        """Request soft pause after the current LangGraph step."""
+        run = self.repo.get_run(run_id)
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if run.status not in ("running", "paused"):
+            raise ValueError(f"Cannot pause run in status={run.status}")
+        self.repo.set_run_control(run_id, "pause_requested")
+        live_url = live_process_url(workflow_id=run.workflow_id, run_id=run_id)
+        return {
+            "run_id": run_id,
+            "status": run.status,
+            "control": "pause_requested",
+            "live_url": live_url,
+            "next_step": f"Pause takes effect after the current step. Open {live_url}",
+        }
+
+    def stop_run(self, run_id: str) -> dict:
+        """Request cancel after the current LangGraph step."""
+        run = self.repo.get_run(run_id)
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if run.status == "paused":
+            # Already between steps — cancel immediately.
+            self.repo.mark_run_cancelled(run_id)
+            live_url = live_process_url(workflow_id=run.workflow_id, run_id=run_id)
+            events.publish(
+                f"run.{run_id}",
+                "run.cancelled",
+                {
+                    "workflow_id": run.workflow_id,
+                    "run_id": run_id,
+                    "status": "cancelled",
+                    "live_url": live_url,
+                },
+            )
+            return {
+                "run_id": run_id,
+                "status": "cancelled",
+                "live_url": live_url,
+                "next_step": f"Open live_url: {live_url}",
+            }
+        if run.status != "running":
+            raise ValueError(f"Cannot stop run in status={run.status}")
+        self.repo.set_run_control(run_id, "cancel_requested")
+        live_url = live_process_url(workflow_id=run.workflow_id, run_id=run_id)
+        return {
+            "run_id": run_id,
+            "status": "running",
+            "control": "cancel_requested",
+            "live_url": live_url,
+            "next_step": f"Stop takes effect after the current step. Open {live_url}",
+        }
 
     def _execute(
         self,
@@ -382,6 +528,7 @@ class WorkflowAgent:
                 state["process_slug"] = workflow.process_slug
             if run_id:
                 state["run_id"] = run_id
+            steps_done: list[dict] = []
             for update in compiled.stream(state, stream_mode="updates"):
                 for step_name, step_state in update.items():
                     # ponytail: updates stream fires after the node finishes — started
@@ -400,11 +547,52 @@ class WorkflowAgent:
                         step_payload,
                     )
                     state = step_state
+                    steps_done.append({"id": step_name, "status": "succeeded"})
                     events.publish(
                         f"run.{run_id or workflow.id}",
                         "run.step",
                         {**step_payload, "status": "succeeded"},
                     )
+                # Cooperative cancel/pause between steps (after recording the step).
+                if run_id:
+                    repo.db.expire_all()  # see pause/stop from other API sessions
+                    run_row = repo.get_run(run_id)
+                    ctrl = run_row.control if run_row else None
+                    if ctrl == "cancel_requested":
+                        state = {**state, "steps": steps_done}
+                        repo.mark_run_cancelled(run_id, state)
+                        events.publish(
+                            f"run.{run_id}",
+                            "run.cancelled",
+                            {
+                                "workflow_id": workflow.id,
+                                "run_id": run_id,
+                                "process_slug": workflow.process_slug,
+                                "status": "cancelled",
+                                "live_url": live_process_url(
+                                    workflow_id=workflow.id, run_id=run_id
+                                ),
+                            },
+                        )
+                        return state
+                    if ctrl == "pause_requested":
+                        state = {**state, "steps": steps_done}
+                        repo.mark_run_paused(run_id, state)
+                        events.publish(
+                            f"run.{run_id}",
+                            "run.paused",
+                            {
+                                "workflow_id": workflow.id,
+                                "run_id": run_id,
+                                "process_slug": workflow.process_slug,
+                                "status": "paused",
+                                "live_url": live_process_url(
+                                    workflow_id=workflow.id, run_id=run_id
+                                ),
+                            },
+                        )
+                        return state
+            state = {**state, "steps": steps_done}
             return state
 
         return {
