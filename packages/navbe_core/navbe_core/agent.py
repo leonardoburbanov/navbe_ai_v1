@@ -1,14 +1,22 @@
 import json
+from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
 
 from navbe_notify import bus as events
 from navbe_scheduler.scheduler import APSchedulerAdapter, ScheduleParser
 
+from navbe_core.config import DATA_DIR
 from navbe_core.graph import build_graph
 from navbe_core.models import SessionLocal, WorkflowModel
 from navbe_core.query import DEFAULT_PAGE_SIZE, query_destination
 from navbe_core.repository import WorkflowRepository
 from navbe_core.sources import SOURCES, match_source, render_markdown
+
+
+def _process_topic(workflow: WorkflowModel) -> str:
+    """Topic for process-level events (`process.{slug}`)."""
+    return f"process.{workflow.process_slug or workflow.id}"
 
 
 class WorkflowAgent:
@@ -24,6 +32,7 @@ class WorkflowAgent:
         when: str,
         context: dict,
         agent_id: str | None = None,
+        process_slug: str | None = None,
     ) -> WorkflowModel:
         scheduled_at = ScheduleParser.parse(when)
         is_recurring = ScheduleParser.is_cron(when)
@@ -36,6 +45,7 @@ class WorkflowAgent:
             context=context,
             cron_expression=when if is_recurring else None,
             agent_id=agent_id,
+            process_slug=process_slug,
         )
         self.scheduler.register(workflow.id, scheduled_at, self._on_fire)
         return workflow
@@ -48,6 +58,7 @@ class WorkflowAgent:
         destination_id: str,
         when: str = "+5s",
         include_observations: bool = False,
+        process_slug: str = "langfuse_daily",
     ) -> WorkflowModel:
         connector = self.repo.get_connector(connector_id, user_id)
         if connector is None:
@@ -61,8 +72,12 @@ class WorkflowAgent:
         return self.schedule(
             user_id=user_id,
             name=name,
-            task=f"Export the last {limit} Langfuse traces{obs_note} from '{connector.name}' to '{destination.name}'",
+            task=(
+                f"Export the last {limit} Langfuse traces{obs_note} "
+                f"from '{connector.name}' to '{destination.name}'"
+            ),
             when=when,
+            process_slug=process_slug,
             context={
                 "action": "graph",
                 "graph": SOURCES["langfuse"]["graph"],
@@ -199,40 +214,86 @@ class WorkflowAgent:
         """Run a workflow immediately, outside its schedule.
 
         mode="append" (default) writes new traces without duplicating ones
-        already at the destination; mode="overwrite" replaces them.
+        already at the destination; mode="overwrite" replaces them;
+        mode="preview" samples into a temp DuckDB file and does not advance watermarks.
         """
         workflow = self.repo.get_workflow(workflow_id, user_id)
         if workflow is None:
             raise ValueError(f"Workflow not found: {workflow_id}")
 
+        is_preview = mode == "preview"
+        exec_mode = "append" if is_preview else mode
+        preview_path = DATA_DIR / f"preview_{workflow_id}.duckdb" if is_preview else None
+
         run = self.repo.start_run(workflow_id)
-        events.publish({"type": "run_started", "workflow_id": workflow_id, "run_id": run.id})
+        start_type = "run.preview.started" if is_preview else "run.started"
+        events.publish(
+            f"run.{run.id}",
+            start_type,
+            {
+                "workflow_id": workflow_id,
+                "run_id": run.id,
+                "process_slug": workflow.process_slug,
+            },
+        )
         try:
-            output = self._execute(workflow, self.repo, mode=mode)
-            self.repo.complete_run(run.id, output)
-            events.publish(
-                {
-                    "type": "run_completed",
-                    "workflow_id": workflow_id,
-                    "run_id": run.id,
-                    "output": output,
-                }
+            output = self._execute(
+                workflow, self.repo, mode=exec_mode, preview=is_preview, preview_path=preview_path
             )
-            return {"run_id": run.id, "status": "completed", "output": output}
+            self.repo.complete_run(run.id, output)
+            if is_preview:
+                events.publish(
+                    f"run.{run.id}",
+                    "run.preview.completed",
+                    {
+                        "workflow_id": workflow_id,
+                        "run_id": run.id,
+                        "process_slug": workflow.process_slug,
+                        "output": output,
+                    },
+                )
+            else:
+                events.publish(
+                    _process_topic(workflow),
+                    "run.succeeded",
+                    {
+                        "workflow_id": workflow_id,
+                        "run_id": run.id,
+                        "process_slug": workflow.process_slug,
+                        "output": output,
+                    },
+                )
+            return {
+                "run_id": run.id,
+                "status": "completed",
+                "output": output,
+                "preview": is_preview,
+            }
         except Exception as e:
             self.repo.fail_run(run.id, str(e))
             events.publish(
+                _process_topic(workflow),
+                "run.failed",
                 {
-                    "type": "run_failed",
                     "workflow_id": workflow_id,
                     "run_id": run.id,
+                    "process_slug": workflow.process_slug,
                     "error": str(e),
-                }
+                },
             )
             raise
+        finally:
+            if preview_path is not None and preview_path.exists():
+                with suppress(OSError):
+                    preview_path.unlink()
 
     def _execute(
-        self, workflow: WorkflowModel, repo: WorkflowRepository, mode: str = "append"
+        self,
+        workflow: WorkflowModel,
+        repo: WorkflowRepository,
+        mode: str = "append",
+        preview: bool = False,
+        preview_path: Path | None = None,
     ) -> dict:
         """Produce this workflow's run output. Most workflows are generic
         (AI-agent tasks with no real side effect here); `graph` DAG
@@ -242,13 +303,27 @@ class WorkflowAgent:
         context = json.loads(workflow.context)
         if context.get("action") == "graph":
             initial = self._resolve_graph_input(context.get("input", {}), repo, workflow.user_id)
+            if preview:
+                initial["limit"] = min(int(initial.get("limit", 50)), 5)
+                if preview_path is not None and "dest_config" in initial:
+                    initial["dest_config"] = {
+                        **initial["dest_config"],
+                        "db_path": str(preview_path),
+                    }
             compiled = build_graph(context["graph"])
             state = {**initial, "workflow_id": workflow.id, "mode": mode}
             for update in compiled.stream(state, stream_mode="updates"):
                 for step_name, step_state in update.items():
                     state = step_state
                     events.publish(
-                        {"type": "step_completed", "workflow_id": workflow.id, "step": step_name}
+                        f"run.{workflow.id}",
+                        "run.step",
+                        {
+                            "step": step_name,
+                            "workflow_id": workflow.id,
+                            "status": "succeeded",
+                            "process_slug": workflow.process_slug,
+                        },
                     )
             return state
 
@@ -289,20 +364,30 @@ class WorkflowAgent:
         db = SessionLocal()
         repo = WorkflowRepository(db)
         run = repo.start_run(workflow_id)
-        events.publish({"type": "run_started", "workflow_id": workflow_id, "run_id": run.id})
         try:
             workflow = repo.get_workflow(workflow_id, user_id=None)
             if workflow is None:
                 raise ValueError(f"Workflow not found: {workflow_id}")
+            events.publish(
+                f"run.{run.id}",
+                "run.started",
+                {
+                    "workflow_id": workflow_id,
+                    "run_id": run.id,
+                    "process_slug": workflow.process_slug,
+                },
+            )
             output = self._execute(workflow, repo)
             repo.complete_run(run.id, output)
             events.publish(
+                _process_topic(workflow),
+                "run.succeeded",
                 {
-                    "type": "run_completed",
                     "workflow_id": workflow_id,
                     "run_id": run.id,
+                    "process_slug": workflow.process_slug,
                     "output": output,
-                }
+                },
             )
 
             if workflow.cron_expression and ScheduleParser.is_cron(workflow.cron_expression):
@@ -310,26 +395,31 @@ class WorkflowAgent:
                 repo.reschedule_workflow(workflow_id, next_run)
                 self.scheduler.register(workflow_id, next_run, self._on_fire)
                 events.publish(
-                    {"type": "workflow_status", "workflow_id": workflow_id, "status": "scheduled"}
+                    _process_topic(workflow),
+                    "workflow.scheduled",
+                    {"workflow_id": workflow_id, "status": "scheduled"},
                 )
             else:
                 repo.update_workflow_status(workflow_id, "completed")
                 events.publish(
-                    {"type": "workflow_status", "workflow_id": workflow_id, "status": "completed"}
+                    _process_topic(workflow),
+                    "workflow.completed",
+                    {"workflow_id": workflow_id, "status": "completed"},
                 )
         except Exception as e:
             repo.fail_run(run.id, str(e))
             repo.update_workflow_status(workflow_id, "failed")
+            workflow = repo.get_workflow(workflow_id, user_id=None)
+            topic = _process_topic(workflow) if workflow else f"run.{run.id}"
             events.publish(
+                topic,
+                "run.failed",
                 {
-                    "type": "run_failed",
                     "workflow_id": workflow_id,
                     "run_id": run.id,
                     "error": str(e),
-                }
-            )
-            events.publish(
-                {"type": "workflow_status", "workflow_id": workflow_id, "status": "failed"}
+                    "process_slug": workflow.process_slug if workflow else None,
+                },
             )
         finally:
             db.close()

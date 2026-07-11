@@ -41,6 +41,7 @@ class WorkflowRepository:
         context: dict,
         cron_expression: str | None = None,
         agent_id: str | None = None,
+        process_slug: str | None = None,
     ) -> WorkflowModel:
         workflow = WorkflowModel(
             user_id=user_id,
@@ -50,6 +51,7 @@ class WorkflowRepository:
             scheduled_at=scheduled_at,
             context=json.dumps(context),
             cron_expression=cron_expression,
+            process_slug=process_slug,
         )
         self.db.add(workflow)
         self.db.commit()
@@ -61,6 +63,27 @@ class WorkflowRepository:
         if user_id is not None:
             query = query.filter(WorkflowModel.user_id == user_id)
         return query.first()
+
+    def get_workflow_by_slug(self, process_slug: str) -> WorkflowModel | None:
+        """Return the workflow for a friendly process slug, if any."""
+        return (
+            self.db.query(WorkflowModel)
+            .filter(WorkflowModel.process_slug == process_slug)
+            .order_by(WorkflowModel.created_at.desc())
+            .first()
+        )
+
+    def list_workflows_with_slug(self, user_id: str) -> list[WorkflowModel]:
+        """List workflows that have a process_slug (visible as named processes)."""
+        return (
+            self.db.query(WorkflowModel)
+            .filter(
+                WorkflowModel.user_id == user_id,
+                WorkflowModel.process_slug.isnot(None),
+            )
+            .order_by(WorkflowModel.created_at.desc())
+            .all()
+        )
 
     def list_workflows(self, user_id: str) -> list[WorkflowModel]:
         return (
@@ -90,6 +113,13 @@ class WorkflowRepository:
     def reschedule_workflow(self, workflow_id: str, scheduled_at: datetime) -> None:
         self.db.query(WorkflowModel).filter(WorkflowModel.id == workflow_id).update(
             {"status": "scheduled", "scheduled_at": scheduled_at}
+        )
+        self.db.commit()
+
+    def update_workflow_watermark(self, workflow_id: str, watermark: datetime) -> None:
+        """Advance the incremental extract watermark after a successful run."""
+        self.db.query(WorkflowModel).filter(WorkflowModel.id == workflow_id).update(
+            {"watermark_at": watermark}
         )
         self.db.commit()
 

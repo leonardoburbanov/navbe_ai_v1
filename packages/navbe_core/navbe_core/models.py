@@ -42,6 +42,8 @@ class WorkflowModel(Base):
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     cron_expression: Mapped[str | None] = mapped_column(String, nullable=True)
     context: Mapped[str] = mapped_column(String, nullable=False, default="{}")
+    process_slug: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    watermark_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -96,7 +98,7 @@ class ConnectorSyncModel(Base):
 
 
 def init_db() -> None:
-    """Create ORM tables and the schema_version bookkeeping table."""
+    """Create ORM tables, schema_version, and additive column migrations."""
     Base.metadata.create_all(bind=engine)
     with engine.begin() as conn:
         conn.execute(
@@ -109,6 +111,12 @@ def init_db() -> None:
                 """
             )
         )
+        # Additive columns for Sprint 1 (SQLite create_all does not ALTER)
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(workflows)")).fetchall()}
+        if "process_slug" not in cols:
+            conn.execute(text("ALTER TABLE workflows ADD COLUMN process_slug VARCHAR"))
+        if "watermark_at" not in cols:
+            conn.execute(text("ALTER TABLE workflows ADD COLUMN watermark_at DATETIME"))
 
 
 def get_db():

@@ -1392,6 +1392,7 @@ dependencies = [
     { name = "navbe-connectors" },
     { name = "navbe-core" },
     { name = "navbe-destinations" },
+    { name = "navbe-notify" },
     { name = "pydantic" },
 ]
 
@@ -1400,6 +1401,7 @@ requires-dist = [
     { name = "navbe-connectors", editable = "packages/navbe_connectors" },
     { name = "navbe-core", editable = "packages/navbe_core" },
     { name = "navbe-destinations", editable = "packages/navbe_destinations" },
+    { name = "navbe-notify", editable = "packages/navbe_notify" },
     { name = "pydantic", specifier = ">=2.0" },
 ]
 

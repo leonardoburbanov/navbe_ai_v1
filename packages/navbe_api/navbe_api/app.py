@@ -18,7 +18,7 @@ from fastmcp import FastMCP
 from fastmcp.utilities.lifespan import combine_lifespans
 from navbe_connectors.langfuse import fetch_recent_traces, test_langfuse_connection
 from navbe_core.agent import WorkflowAgent
-from navbe_core.config import DATA_DIR
+from navbe_core.config import DATA_DIR, NAVBE_HOME
 from navbe_core.models import (
     ConnectorModel,
     ConnectorSyncModel,
@@ -209,11 +209,45 @@ def query_workflow_destination(
     )
 
 
+@mcp.tool
+def subscribe(subscriber_id: str, topics: list[str] | None = None) -> dict:
+    """Register as a named event-bus subscriber; then poll with pull_events."""
+    return _run_tool("subscribe", subscriber_id=subscriber_id, topics=topics)
+
+
+@mcp.tool
+def pull_events(subscriber_id: str, limit: int = 50) -> dict:
+    """Poll events since this subscriber's cursor and advance it."""
+    return _run_tool("pull_events", subscriber_id=subscriber_id, limit=limit)
+
+
+@mcp.tool
+def get_process_status(process_slug: str) -> dict:
+    """Shared live status for a named process (any agent)."""
+    return _run_tool("get_process_status", process_slug=process_slug)
+
+
+@mcp.tool
+def list_processes() -> dict:
+    """List named processes visible to all agents on this hub."""
+    return _run_tool("list_processes")
+
+
+@mcp.tool
+def preview_workflow(workflow_id: str) -> dict:
+    """Dry-run a workflow into a preview sandbox; does not advance watermarks."""
+    try:
+        return _run_tool("preview_workflow", workflow_id=workflow_id)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
 mcp_app = mcp.http_app(path="/", stateless_http=True)
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    events.init(NAVBE_HOME / "events.db")
     init_db()
     db = SessionLocal()
     try:
