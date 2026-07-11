@@ -11,6 +11,7 @@ def _create_langfuse_export_workflow(
     destination_id: str,
     when: str = "+5s",
     include_observations: bool = False,
+    process_slug: str = "langfuse_daily",
 ) -> dict:
     workflow = agent.create_langfuse_export_workflow(
         user_id=user_id,
@@ -19,10 +20,12 @@ def _create_langfuse_export_workflow(
         destination_id=destination_id,
         when=when,
         include_observations=include_observations,
+        process_slug=process_slug,
     )
     return {
         "workflow_id": workflow.id,
         "name": workflow.name,
+        "process_slug": workflow.process_slug,
         "scheduled_at": workflow.scheduled_at.isoformat(),
         "message": f"Scheduled '{name}' for {workflow.scheduled_at.strftime('%A %b %d at %I:%M %p')} UTC",
     }
@@ -53,6 +56,10 @@ register(
         "include_observations": {
             "type": "boolean",
             "description": "Also fetch and export each trace's observations (DuckDB only, default false)",
+        },
+        "process_slug": {
+            "type": "string",
+            "description": "Friendly process name for status queries (default langfuse_daily)",
         },
     },
 )

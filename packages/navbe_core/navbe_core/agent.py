@@ -253,6 +253,7 @@ class WorkflowAgent:
                     },
                 )
             else:
+                self._advance_watermark(workflow_id, output)
                 events.publish(
                     _process_topic(workflow),
                     "run.succeeded",
@@ -310,6 +311,8 @@ class WorkflowAgent:
                         **initial["dest_config"],
                         "db_path": str(preview_path),
                     }
+            elif workflow.watermark_at is not None:
+                initial["since"] = workflow.watermark_at
             compiled = build_graph(context["graph"])
             state = {**initial, "workflow_id": workflow.id, "mode": mode}
             for update in compiled.stream(state, stream_mode="updates"):
@@ -359,6 +362,24 @@ class WorkflowAgent:
 
         return resolved
 
+    def _advance_watermark(
+        self,
+        workflow_id: str,
+        output: dict,
+        repo: WorkflowRepository | None = None,
+    ) -> None:
+        """Advance watermark_at from last_timestamp after a successful production run."""
+        last_ts_str = output.get("last_timestamp") if isinstance(output, dict) else None
+        if not last_ts_str:
+            return
+        last_ts = (
+            last_ts_str
+            if isinstance(last_ts_str, datetime)
+            else datetime.fromisoformat(str(last_ts_str).replace("Z", "+00:00"))
+        )
+        target = repo or self.repo
+        target.update_workflow_watermark(workflow_id, last_ts)
+
     def _on_fire(self, workflow_id: str) -> None:
         """Called by APScheduler when a workflow's scheduled time arrives."""
         db = SessionLocal()
@@ -379,6 +400,7 @@ class WorkflowAgent:
             )
             output = self._execute(workflow, repo)
             repo.complete_run(run.id, output)
+            self._advance_watermark(workflow_id, output, repo=repo)
             events.publish(
                 _process_topic(workflow),
                 "run.succeeded",

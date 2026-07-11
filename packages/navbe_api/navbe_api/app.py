@@ -234,6 +234,12 @@ def list_processes() -> dict:
 
 
 @mcp.tool
+def list_analysis_templates(destination_id: str) -> dict:
+    """List analysis templates affordable for a destination."""
+    return _run_tool("list_analysis_templates", destination_id=destination_id)
+
+
+@mcp.tool
 def preview_workflow(workflow_id: str) -> dict:
     """Dry-run a workflow into a preview sandbox; does not advance watermarks."""
     try:

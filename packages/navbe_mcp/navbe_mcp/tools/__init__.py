@@ -5,6 +5,7 @@ from navbe_mcp.tools import destinations as destinations
 from navbe_mcp.tools import get_process_status as get_process_status
 from navbe_mcp.tools import langfuse_export as langfuse_export
 from navbe_mcp.tools import list as list_tools
+from navbe_mcp.tools import list_analysis_templates as list_analysis_templates
 from navbe_mcp.tools import list_processes as list_processes
 from navbe_mcp.tools import preview_workflow as preview_workflow
 from navbe_mcp.tools import pull_events as pull_events
@@ -22,6 +23,7 @@ __all__ = [
     "get_process_status",
     "langfuse_export",
     "list_tools",
+    "list_analysis_templates",
     "list_processes",
     "preview_workflow",
     "pull_events",

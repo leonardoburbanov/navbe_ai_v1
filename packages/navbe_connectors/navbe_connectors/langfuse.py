@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 
 import httpx
@@ -7,6 +8,30 @@ LANGFUSE_OBSERVATION_TIMEOUT_SECONDS = 30.0
 TRACES_LOOKBACK_HOURS = 24
 TRACES_LIMIT = 50  # single page, capped — avoid pulling a connector's full trace history
 DEFAULT_PAGE_SIZE = 10  # small enough to render as a table in a chat reply
+
+# Keys absorbed into typed columns; everything else lands in extras.
+_TRACE_KNOWN_KEYS = {
+    "id",
+    "name",
+    "timestamp",
+    "userId",
+    "tags",
+    "usage",
+    "totalCost",
+    "metadata",
+    "observations",
+}
+_OBS_KNOWN_KEYS = {
+    "id",
+    "traceId",
+    "type",
+    "name",
+    "startTime",
+    "endTime",
+    "usage",
+    "calculatedTotalCost",
+    "totalCost",
+}
 
 
 def test_langfuse_connection(host: str, public_key: str, secret_key: str) -> str:
@@ -26,6 +51,56 @@ def test_langfuse_connection(host: str, public_key: str, secret_key: str) -> str
         return "error"
 
 
+def _extract_trace(t: dict) -> dict:
+    """Map a Langfuse trace payload to destination columns; never drop the row."""
+    usage = t.get("usage") or {}
+    extras = {k: v for k, v in t.items() if k not in _TRACE_KNOWN_KEYS}
+    return {
+        "id": t.get("id"),
+        "name": t.get("name"),
+        "timestamp": t.get("timestamp"),
+        "user_id": t.get("userId"),
+        "tags": json.dumps(t.get("tags") or []),
+        "prompt_tokens": usage.get("input"),
+        "completion_tokens": usage.get("output"),
+        "total_tokens": usage.get("total"),
+        "total_cost": t.get("totalCost"),
+        "extras": json.dumps(extras) if extras else None,
+        # Kept for flatten_observations; stripped before DuckDB write.
+        "observations": t.get("observations"),
+    }
+
+
+def _extract_observation(o: dict, trace_id: str | None = None) -> dict:
+    """Map a Langfuse observation payload to destination columns."""
+    usage = o.get("usage") or {}
+    extras = {k: v for k, v in o.items() if k not in _OBS_KNOWN_KEYS}
+    cost = o.get("calculatedTotalCost")
+    if cost is None:
+        cost = o.get("totalCost")
+    return {
+        "id": o.get("id"),
+        "trace_id": trace_id or o.get("traceId"),
+        "type": o.get("type"),
+        "name": o.get("name"),
+        "start_time": o.get("startTime"),
+        "end_time": o.get("endTime"),
+        "prompt_tokens": usage.get("input"),
+        "completion_tokens": usage.get("output"),
+        "total_tokens": usage.get("total"),
+        "total_cost": cost,
+        "extras": json.dumps(extras) if extras else None,
+    }
+
+
+def _from_timestamp_param(since: datetime) -> str:
+    """Format a watermark for Langfuse fromTimestamp."""
+    ts = since.isoformat()
+    if since.tzinfo is None and not ts.endswith("Z"):
+        ts += "Z"
+    return ts
+
+
 def _fetch_traces(
     host: str, public_key: str, secret_key: str, limit: int, since: datetime | None
 ) -> list[dict]:
@@ -33,9 +108,9 @@ def _fetch_traces(
     `limit` and never paginated, to keep this cheap against Langfuse's
     usage-based API.
     """
-    params = {"limit": limit, "orderBy": "timestamp.desc"}
+    params: dict = {"limit": limit, "orderBy": "timestamp.desc"}
     if since is not None:
-        params["fromTimestamp"] = since.isoformat() + "Z"
+        params["fromTimestamp"] = _from_timestamp_param(since)
 
     response = httpx.get(
         f"{host.rstrip('/')}/api/public/traces",
@@ -45,15 +120,7 @@ def _fetch_traces(
     )
     response.raise_for_status()
     data = response.json().get("data", [])
-    return [
-        {
-            "id": trace.get("id"),
-            "name": trace.get("name"),
-            "timestamp": trace.get("timestamp"),
-            "userId": trace.get("userId"),
-        }
-        for trace in data
-    ]
+    return [_extract_trace(trace) for trace in data]
 
 
 def fetch_recent_traces(host: str, public_key: str, secret_key: str) -> list[dict]:
@@ -65,10 +132,15 @@ def fetch_recent_traces(host: str, public_key: str, secret_key: str) -> list[dic
 
 
 def fetch_last_traces(
-    host: str, public_key: str, secret_key: str, limit: int = 50, include_observations: bool = False
+    host: str,
+    public_key: str,
+    secret_key: str,
+    limit: int = 50,
+    include_observations: bool = False,
+    since: datetime | None = None,
 ) -> list[dict]:
-    """Fetch the most recent `limit` traces, regardless of age."""
-    traces = _fetch_traces(host, public_key, secret_key, limit=limit, since=None)
+    """Fetch the most recent `limit` traces, optionally since a watermark."""
+    traces = _fetch_traces(host, public_key, secret_key, limit=limit, since=since)
     if include_observations:
         for trace in traces:
             try:
@@ -91,16 +163,7 @@ def fetch_observations(
         timeout=LANGFUSE_OBSERVATION_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
-    return [
-        {
-            "id": o.get("id"),
-            "type": o.get("type"),
-            "name": o.get("name"),
-            "startTime": o.get("startTime"),
-            "endTime": o.get("endTime"),
-        }
-        for o in response.json().get("data", [])
-    ]
+    return [_extract_observation(o, trace_id=trace_id) for o in response.json().get("data", [])]
 
 
 def fetch_traces_page(
@@ -129,15 +192,7 @@ def fetch_traces_page(
     payload = response.json()
     meta = payload.get("meta", {})
 
-    traces = [
-        {
-            "id": t.get("id"),
-            "name": t.get("name"),
-            "timestamp": t.get("timestamp"),
-            "userId": t.get("userId"),
-        }
-        for t in payload.get("data", [])
-    ]
+    traces = [_extract_trace(t) for t in payload.get("data", [])]
     if include_observations:
         for trace in traces:
             trace["observations"] = fetch_observations(host, public_key, secret_key, trace["id"])
