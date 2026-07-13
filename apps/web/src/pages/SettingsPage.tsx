@@ -148,6 +148,11 @@ export function SettingsPage({ onOpenReports }: Props) {
         }}
       >
         <h3 style={{ marginTop: 0 }}>Daily report</h3>
+        <p style={{ fontSize: 13, color: "#64748b" }}>
+          Preview / Send run as DAG steps{" "}
+          <code>build_retailer_report</code> → <code>send_email_report</code>{" "}
+          (visible under Runs).
+        </p>
         <label style={{ display: "block", fontSize: 13, marginBottom: 8 }}>
           Destination
           <select

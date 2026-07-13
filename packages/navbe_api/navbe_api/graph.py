@@ -33,9 +33,15 @@ def workflow_to_flow_graph(context_json: str) -> dict:
 
     Positions are placeholders (0,0) — the Control UI runs dagre layout client-side.
     """
+    from navbe_core.sources import SOURCES
+
     context = json.loads(context_json) if context_json else {}
     graph = context.get("graph") or {}
     nodes_raw: list[str] = list(graph.get("nodes") or [])
+    # Match agent soft-upgrade so the canvas shows report + email steps.
+    if "refresh_retailer_mart" in nodes_raw and "build_retailer_report" not in nodes_raw:
+        graph = SOURCES["langfuse"]["graph"]
+        nodes_raw = list(graph.get("nodes") or [])
     edges_raw: list[list[str]] = list(graph.get("edges") or [])
 
     nodes = [

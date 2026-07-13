@@ -26,10 +26,18 @@ SOURCES: dict[str, dict] = {
         ),
         "graph": {
             "entry": "fetch_traces",
-            "nodes": ["fetch_traces", "write_traces", "refresh_retailer_mart"],
+            "nodes": [
+                "fetch_traces",
+                "write_traces",
+                "refresh_retailer_mart",
+                "build_retailer_report",
+                "send_email_report",
+            ],
             "edges": [
                 ["fetch_traces", "write_traces"],
                 ["write_traces", "refresh_retailer_mart"],
+                ["refresh_retailer_mart", "build_retailer_report"],
+                ["build_retailer_report", "send_email_report"],
             ],
         },
         "default_input": {"limit": 50, "include_observations": True},

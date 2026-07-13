@@ -23,8 +23,16 @@ export function RunMetrics({ output }: Props) {
   if (obs != null) items.push(`${obs} observations`);
   if (output.mart_refreshed === true) items.push("mart refreshed");
   if (output.email_sent === true) items.push("email sent");
-  const reportPath = str(output.report_path) ?? str(output.html_path);
+  if (output.email_skipped === true) items.push("email skipped");
+  const reportPath =
+    str(output.preview_path) ??
+    str(output.report_path) ??
+    str(output.html_path);
   if (reportPath) items.push(`report: ${reportPath}`);
+  const reportDate = str(output.report_date);
+  if (reportDate) items.push(`date ${reportDate}`);
+  const provider = str(output.provider);
+  if (provider) items.push(`via ${provider}`);
   const err = str(output.error);
   if (err) items.push(`error: ${err}`);
 
@@ -48,10 +56,17 @@ export function RunMetrics({ output }: Props) {
     "observations_written",
     "mart_refreshed",
     "email_sent",
+    "email_skipped",
     "report_path",
+    "preview_path",
     "html_path",
+    "report_date",
+    "provider",
     "error",
     "compare_result",
+    "totals",
+    "report_payload",
+    "steps",
   ]);
   for (const [k, v] of Object.entries(output)) {
     if (known.has(k)) continue;

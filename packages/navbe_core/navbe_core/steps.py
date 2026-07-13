@@ -395,6 +395,22 @@ def send_email_report(state: dict) -> dict:
             "totals": payload.totals,
         }
 
+    to_raw = state.get("email_to") or []
+    if isinstance(to_raw, str):
+        to_list = [a.strip() for a in to_raw.split(",") if a.strip()]
+    else:
+        to_list = list(to_raw)
+
+    # Sync workflows include this step without recipients — build preview, skip send.
+    if not to_list:
+        return {
+            "email_sent": False,
+            "email_skipped": True,
+            "preview_path": str(path),
+            "report_date": payload.report_date,
+            "totals": payload.totals,
+        }
+
     if not email_configured():
         events.publish(topic, "report.failed", {"error": "email not configured"})
         return {
@@ -405,18 +421,6 @@ def send_email_report(state: dict) -> dict:
             },
             "preview_path": str(path),
             "next_step": "configure_resend",
-        }
-
-    to_raw = state.get("email_to") or []
-    if isinstance(to_raw, str):
-        to_list = [a.strip() for a in to_raw.split(",") if a.strip()]
-    else:
-        to_list = list(to_raw)
-    if not to_list:
-        return {
-            "email_sent": False,
-            "needs_input": {"fields": ["email_to"], "hint": "provide recipient list"},
-            "preview_path": str(path),
         }
 
     subject = f"Navbe daily retailer report — {payload.report_date}"

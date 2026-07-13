@@ -131,6 +131,49 @@ class WorkflowAgent:
             },
         )
 
+    def run_daily_report_now(
+        self,
+        user_id: str,
+        destination_id: str,
+        email_to: list[str] | str | None = None,
+        *,
+        preview: bool = False,
+    ) -> dict:
+        """One-shot report via LangGraph steps (build_retailer_report → send_email_report)."""
+        destination = self.repo.get_destination(destination_id, user_id)
+        if destination is None:
+            raise ValueError(f"Destination not found: {destination_id}")
+        if isinstance(email_to, str):
+            recipients = [a.strip() for a in email_to.split(",") if a.strip()]
+        elif email_to:
+            recipients = list(email_to)
+        else:
+            recipients = []
+        if not preview and not recipients:
+            raise ValueError("email_to is required to send")
+
+        graph = SOURCES["langfuse_daily_report"]["graph"]
+        workflow = self.repo.create_workflow(
+            user_id=user_id,
+            name="langfuse_daily_report_preview" if preview else "langfuse_daily_report_once",
+            task=(
+                f"{'Preview' if preview else 'Send'} retailer HTML report from "
+                f"'{destination.name}'"
+            ),
+            scheduled_at=datetime.utcnow(),
+            process_slug="langfuse_daily_report",
+            context={
+                "action": "graph",
+                "graph": graph,
+                "input": {
+                    "destination_id": destination.id,
+                    "email_to": recipients,
+                    "preview_only": preview,
+                },
+            },
+        )
+        return self.run_now(workflow.id, user_id, mode="append")
+
     def suggest(self, user_id: str, hint: str) -> dict:
         """Propose a DAG workflow for a data source named in free text (e.g.
         "I want to monitor langfuse traces"), using this backend's per-source
@@ -522,12 +565,22 @@ class WorkflowAgent:
                     }
             elif workflow.watermark_at is not None:
                 initial["since"] = workflow.watermark_at.isoformat()
-            compiled = build_graph(context["graph"])
+            # Soft-upgrade stored IR so existing langfuse syncs get report+email steps.
+            graph = context.get("graph") or {}
+            nodes = list(graph.get("nodes") or [])
+            if (
+                "refresh_retailer_mart" in nodes
+                and "build_retailer_report" not in nodes
+            ):
+                graph = SOURCES["langfuse"]["graph"]
+            compiled = build_graph(graph)
             state = {**initial, "workflow_id": workflow.id, "mode": mode}
             if workflow.process_slug:
                 state["process_slug"] = workflow.process_slug
             if run_id:
                 state["run_id"] = run_id
+            if initial.get("preview_only"):
+                state["preview_only"] = True
             steps_done: list[dict] = []
             for update in compiled.stream(state, stream_mode="updates"):
                 for step_name, step_state in update.items():

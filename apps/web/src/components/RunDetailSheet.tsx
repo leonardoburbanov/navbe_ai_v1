@@ -229,6 +229,37 @@ export function RunDetailSheet({ run, onClose, onUpdated }: Props) {
           {tab === "report" && (
             <div>
               <RunMetrics output={run.output} />
+              {typeof run.output?.report_date === "string" && (
+                <p style={{ fontSize: 13, marginTop: 12 }}>
+                  Report date: <strong>{run.output.report_date}</strong>
+                  {run.output.email_sent === true
+                    ? " · emailed"
+                    : run.output.email_skipped === true
+                      ? " · email skipped (no recipients)"
+                      : run.output.preview_path
+                        ? " · preview only"
+                        : ""}
+                </p>
+              )}
+              {typeof run.output?.preview_path === "string" && (
+                <p style={{ fontSize: 12, color: "#64748b", wordBreak: "break-all" }}>
+                  HTML: {run.output.preview_path}
+                </p>
+              )}
+              {run.output?.totals != null && (
+                <pre
+                  style={{
+                    marginTop: 12,
+                    fontSize: 11,
+                    background: "#f8fafc",
+                    padding: 12,
+                    borderRadius: 8,
+                    overflow: "auto",
+                  }}
+                >
+                  {JSON.stringify(run.output.totals, null, 2)}
+                </pre>
+              )}
               {run.error && (
                 <pre
                   style={{
@@ -254,11 +285,6 @@ export function RunDetailSheet({ run, onClose, onUpdated }: Props) {
                 >
                   {JSON.stringify(run.output.compare_result, null, 2)}
                 </pre>
-              )}
-              {run.output?.report_path != null && (
-                <p style={{ fontSize: 13, color: "#64748b" }}>
-                  Report: {String(run.output.report_path)}
-                </p>
               )}
             </div>
           )}

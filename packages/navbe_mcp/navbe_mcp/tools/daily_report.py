@@ -2,24 +2,15 @@
 
 from __future__ import annotations
 
-import json
-import os
-
-import duckdb
 from navbe_core.agent import WorkflowAgent
-from navbe_core.config import DATA_DIR
 from navbe_core.models_report import ResendConfig, SmtpConfig
-from navbe_notify import bus as events
 from navbe_notify.email_report import (
     email_configured,
     probe_resend,
     probe_smtp,
-    render_retailer_daily_html,
-    save_report_preview,
     save_resend_config,
     save_smtp_config,
 )
-from navbe_transforms.retailer_report import build_retailer_report_payload
 from pydantic import BaseModel
 
 from navbe_mcp.registry import register
@@ -96,49 +87,32 @@ def _configure_email(
     ).model_dump()
 
 
-def _resolve_db_path(agent: WorkflowAgent, user_id: str, destination_id: str) -> str:
-    dest = agent.repo.get_destination(destination_id, user_id)
-    if dest is None:
-        raise ValueError(f"Destination not found: {destination_id}")
-    config = json.loads(dest.config)
-    return config.get("db_path") or os.path.join(str(DATA_DIR), "langfuse.duckdb")
-
-
 def _preview_daily_report(
     agent: WorkflowAgent,
     user_id: str,
     destination_id: str,
 ) -> dict:
-    """Build HTML report and save under ~/.navbe/reports/ without sending."""
+    """Run build_retailer_report → send_email_report (preview_only) as a real graph run."""
     try:
-        db_path = _resolve_db_path(agent, user_id, destination_id)
+        result = agent.run_daily_report_now(
+            user_id=user_id,
+            destination_id=destination_id,
+            preview=True,
+        )
     except ValueError as e:
         return {"error": str(e), "next_step": "create_destination or list_destinations"}
 
-    con = duckdb.connect(db_path, read_only=True)
-    try:
-        payload = build_retailer_report_payload(con)
-    finally:
-        con.close()
-
-    html = render_retailer_daily_html(payload)
-    path = save_report_preview(html, payload.report_date)
-    events.publish(
-        "process.langfuse_daily_report",
-        "report.previewed",
-        {
-            "report_date": payload.report_date,
-            "path": str(path),
-            "totals": payload.totals,
-            "destination_id": destination_id,
-        },
-    )
+    output = result.get("output") or {}
     return {
-        "report_date": payload.report_date,
-        "preview_path": str(path),
-        "totals": payload.totals,
-        "retailer_count": len(payload.rows),
-        "next_step": "schedule_daily_report or send_daily_report",
+        **result,
+        "report_date": output.get("report_date"),
+        "preview_path": output.get("preview_path"),
+        "totals": output.get("totals"),
+        "next_step": (
+            f"Open live_url for the DAG: {result.get('live_url')}"
+            if result.get("live_url")
+            else "schedule_daily_report or send_daily_report"
+        ),
     }
 
 
@@ -193,7 +167,7 @@ def _send_daily_report(
     destination_id: str | None = None,
     email_to: str | None = None,
 ) -> dict:
-    """Run the report workflow now (production send), or one-shot if ids given."""
+    """Run the report workflow now via LangGraph steps (Resend/SMTP send)."""
     if workflow_id:
         return agent.run_now(workflow_id, user_id, mode="append")
 
@@ -205,15 +179,15 @@ def _send_daily_report(
     if not email_configured():
         return {"needs_input": {"fields": ["api_key"]}, "next_step": "configure_resend"}
 
-    workflow = agent.create_daily_report_workflow(
-        user_id=user_id,
-        destination_id=destination_id,
-        email_to=email_to,
-        when="+1s",
-        name="langfuse_daily_report_once",
-        process_slug="langfuse_daily_report",
-    )
-    return agent.run_now(workflow.id, user_id, mode="append")
+    try:
+        return agent.run_daily_report_now(
+            user_id=user_id,
+            destination_id=destination_id,
+            email_to=email_to,
+            preview=False,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 register(
@@ -253,8 +227,9 @@ register(
     name="preview_daily_report",
     fn=_preview_daily_report,
     description=(
-        "Build the daily retailer HTML report from a DuckDB destination mart and save it "
-        "under ~/.navbe/reports/ without sending email."
+        "Run graph steps build_retailer_report → send_email_report (preview only): "
+        "build HTML from the DuckDB mart and save under ~/.navbe/reports/ without sending. "
+        "Returns live_url for the Control UI Runs sheet / DAG."
     ),
     parameters={
         "destination_id": {
@@ -269,7 +244,8 @@ register(
     fn=_schedule_daily_report,
     description=(
         "Schedule process langfuse_daily_report (default cron 0 23 * * * UTC) to email "
-        "the HTML retailer report. Requires configure_resend (or configure_email) first."
+        "the HTML retailer report via steps build_retailer_report → send_email_report. "
+        "Requires configure_resend (or configure_email) first."
     ),
     parameters={
         "destination_id": {"type": "string", "description": "DuckDB destination id"},
@@ -289,8 +265,9 @@ register(
     name="send_daily_report",
     fn=_send_daily_report,
     description=(
-        "Send the daily retailer HTML email now. Pass workflow_id from schedule_daily_report, "
-        "or destination_id + email_to for a one-shot run."
+        "Send the daily retailer HTML email now via LangGraph steps "
+        "(build_retailer_report → send_email_report / Resend). "
+        "Pass workflow_id from schedule_daily_report, or destination_id + email_to."
     ),
     parameters={
         "workflow_id": {"type": "string", "description": "Existing report workflow id"},
