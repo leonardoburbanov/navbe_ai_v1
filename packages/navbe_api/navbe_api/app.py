@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from navbe_api.auth import get_current_user
-from navbe_api.graph import workflow_to_flow_graph
+from navbe_api.graph import workflow_bindings, workflow_to_flow_graph
 from navbe_api.sse import stream_all_events, stream_workflow_events
 
 DEMO_USER_ID = "demo"
@@ -77,6 +77,47 @@ def _run_tool(tool_name: str, **kwargs) -> dict:
     finally:
         db.close()
 
+
+def _ui_list_workflows(db: Session) -> dict:
+    """Named workflows for the Control UI (demo user), dual slug keys."""
+    repo = WorkflowRepository(db)
+    rows = []
+    for w in repo.list_workflows_with_slug(DEMO_USER_ID):
+        last = repo.get_last_run(w.id)
+        friendly = w.friendly_slug()
+        ctx = json.loads(w.context or "{}")
+        graph = ctx.get("graph") or {}
+        bindings = workflow_bindings(w.context, repo, DEMO_USER_ID)
+        row = {
+            "slug": friendly,
+            "process_slug": friendly,
+            "workflow_id": w.id,
+            "name": w.name,
+            "status": w.status,
+            "scheduled_at": w.scheduled_at.isoformat() if w.scheduled_at else None,
+            "cron_expression": w.cron_expression,
+            "watermark": w.watermark_at.isoformat() if w.watermark_at else None,
+            "node_count": len(graph.get("nodes") or []),
+            "nodes": list(graph.get("nodes") or []),
+            "connector_name": bindings.get("connector_name"),
+            "destination_name": bindings.get("destination_name"),
+            "trigger": bindings.get("trigger") or {},
+            "last_run": (
+                {
+                    "run_id": last.id,
+                    "status": last.status,
+                    "started_at": last.started_at.isoformat(),
+                    "completed_at": (
+                        last.completed_at.isoformat() if last.completed_at else None
+                    ),
+                    "duration_ms": last.duration_ms,
+                }
+                if last
+                else None
+            ),
+        }
+        rows.append(row)
+    return {"workflows": rows, "processes": rows}
 
 # -- MCP server -------------------------------------------------------------
 
@@ -127,22 +168,98 @@ def run_workflow(workflow_id: str, mode: str = "append") -> dict:
 
 
 @mcp.tool
-def create_connector(name: str, host: str, public_key: str, secret_key: str) -> dict:
-    """Register a Langfuse connector with host and API keys."""
+def create_connector(
+    name: str,
+    host: str = "",
+    public_key: str = "",
+    secret_key: str = "",
+    type: str = "langfuse",
+    env_key: str = "prod",
+) -> dict:
+    """Register a source connector with an initial environment (default prod)."""
     return _run_tool(
-        "create_connector", name=name, host=host, public_key=public_key, secret_key=secret_key
+        "create_connector",
+        name=name,
+        host=host,
+        public_key=public_key,
+        secret_key=secret_key,
+        type=type,
+        env_key=env_key,
     )
 
 
 @mcp.tool
 def list_connectors() -> dict:
-    """List all configured Langfuse connectors."""
+    """List source connectors with environment summaries (secrets redacted)."""
     return _run_tool("list_connectors")
 
 
 @mcp.tool
+def get_connector(connector_id: str) -> dict:
+    """Get one source connector with redacted environments."""
+    return _run_tool("get_connector", connector_id=connector_id)
+
+
+@mcp.tool
+def update_connector(
+    connector_id: str, name: str | None = None, status: str | None = None
+) -> dict:
+    """Rename a connector or set status."""
+    return _run_tool(
+        "update_connector", connector_id=connector_id, name=name, status=status
+    )
+
+
+@mcp.tool
+def delete_connector(connector_id: str) -> dict:
+    """Delete a connector and its environments (refuses if a workflow still binds it)."""
+    return _run_tool("delete_connector", connector_id=connector_id)
+
+
+@mcp.tool
+def upsert_connector_env(
+    connector_id: str,
+    env_key: str,
+    host: str | None = None,
+    public_key: str | None = None,
+    secret_key: str | None = None,
+    is_default: bool = False,
+    label: str | None = None,
+) -> dict:
+    """Create or update a connector environment (staging/testing/prod/custom)."""
+    return _run_tool(
+        "upsert_connector_env",
+        connector_id=connector_id,
+        env_key=env_key,
+        host=host,
+        public_key=public_key,
+        secret_key=secret_key,
+        is_default=is_default,
+        label=label,
+    )
+
+
+@mcp.tool
+def delete_connector_env(connector_id: str, env_key: str) -> dict:
+    """Delete one connector environment (not the last remaining)."""
+    return _run_tool(
+        "delete_connector_env", connector_id=connector_id, env_key=env_key
+    )
+
+
+@mcp.tool
+def test_connector(connector_id: str, env: str | None = None) -> dict:
+    """Probe Langfuse credentials for a connector environment."""
+    return _run_tool("test_connector", connector_id=connector_id, env=env)
+
+
+@mcp.tool
 def query_langfuse(
-    connector_id: str, page: int = 1, page_size: int = 10, include_observations: bool = False
+    connector_id: str,
+    page: int = 1,
+    page_size: int = 10,
+    include_observations: bool = False,
+    env: str | None = None,
 ) -> dict:
     """Fetch one page of traces directly from Langfuse."""
     return _run_tool(
@@ -151,12 +268,13 @@ def query_langfuse(
         page=page,
         page_size=page_size,
         include_observations=include_observations,
+        env=env,
     )
 
 
 @mcp.tool
 def create_destination(type: str, name: str, config: dict = {}) -> dict:
-    """Register a destination. type: 'csv_file' or 'duckdb'."""
+    """Register a destination. type: duckdb, sqlite, csv_file, or email."""
     return _run_tool("create_destination", type=type, name=name, config=config)
 
 
@@ -234,14 +352,187 @@ def pull_events(subscriber_id: str, limit: int = 50) -> dict:
 
 @mcp.tool
 def get_process_status(process_slug: str) -> dict:
-    """Shared live status for a named process (any agent)."""
+    """Deprecated alias for get_workflow_status."""
     return _run_tool("get_process_status", process_slug=process_slug)
 
 
 @mcp.tool
+def get_workflow_status(
+    slug: str | None = None,
+    process_slug: str | None = None,
+    workflow_id: str | None = None,
+) -> dict:
+    """Shared live status for a workflow (any agent)."""
+    return _run_tool(
+        "get_workflow_status",
+        slug=slug,
+        process_slug=process_slug,
+        workflow_id=workflow_id,
+    )
+
+
+@mcp.tool
 def list_processes() -> dict:
-    """List named processes visible to all agents on this hub."""
+    """Deprecated alias for list_workflows."""
     return _run_tool("list_processes")
+
+
+@mcp.tool
+def propose_workflow(hint: str) -> dict:
+    """Propose a workflow draft from natural language (no persist)."""
+    try:
+        return _run_tool("propose_workflow", hint=hint)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def confirm_workflow(
+    draft: dict,
+    when: str = "+5s",
+    name: str | None = None,
+    slug: str | None = None,
+) -> dict:
+    """Persist a propose_workflow draft."""
+    try:
+        return _run_tool(
+            "confirm_workflow", draft=draft, when=when, name=name, slug=slug
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def update_workflow(
+    workflow_id: str,
+    name: str | None = None,
+    slug: str | None = None,
+    task: str | None = None,
+    status: str | None = None,
+) -> dict:
+    """Patch workflow metadata."""
+    try:
+        return _run_tool(
+            "update_workflow",
+            workflow_id=workflow_id,
+            name=name,
+            slug=slug,
+            task=task,
+            status=status,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def delete_workflow(workflow_id: str) -> dict:
+    """Soft-archive a workflow."""
+    try:
+        return _run_tool("delete_workflow", workflow_id=workflow_id)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def set_workflow_trigger(
+    workflow_id: str, when: str | None = None, hint: str | None = None
+) -> dict:
+    """Set cron/manual trigger on a workflow."""
+    try:
+        return _run_tool(
+            "set_workflow_trigger", workflow_id=workflow_id, when=when, hint=hint
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def set_workflow_source(
+    workflow_id: str, connector_id: str, connector_env: str | None = None
+) -> dict:
+    """Bind a connector source (and optional env) to a workflow."""
+    try:
+        return _run_tool(
+            "set_workflow_source",
+            workflow_id=workflow_id,
+            connector_id=connector_id,
+            connector_env=connector_env,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def set_workflow_step_connector(
+    workflow_id: str,
+    step: str,
+    connector_id: str | None = None,
+    env: str | None = None,
+    config: dict | None = None,
+    clear: bool = False,
+) -> dict:
+    """Set or clear per-step connector/env override on graph.node_config."""
+    try:
+        return _run_tool(
+            "set_workflow_step_connector",
+            workflow_id=workflow_id,
+            step=step,
+            connector_id=connector_id,
+            env=env,
+            config=config,
+            clear=clear,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def set_workflow_destination(workflow_id: str, destination_id: str) -> dict:
+    """Bind a destination to a workflow."""
+    try:
+        return _run_tool(
+            "set_workflow_destination",
+            workflow_id=workflow_id,
+            destination_id=destination_id,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def add_workflow_step(
+    workflow_id: str, step: str | None = None, hint: str | None = None
+) -> dict:
+    """Append a step and auto-wire edges when possible."""
+    try:
+        return _run_tool(
+            "add_workflow_step", workflow_id=workflow_id, step=step, hint=hint
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def remove_workflow_step(workflow_id: str, step: str) -> dict:
+    """Remove a step from the workflow graph."""
+    try:
+        return _run_tool("remove_workflow_step", workflow_id=workflow_id, step=step)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool
+def connect_workflow_steps(workflow_id: str, source: str, target: str) -> dict:
+    """Add an explicit edge between two steps."""
+    try:
+        return _run_tool(
+            "connect_workflow_steps",
+            workflow_id=workflow_id,
+            source=source,
+            target=target,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 @mcp.tool
@@ -500,34 +791,154 @@ def _register_routes(app: FastAPI) -> None:
 
     @app.get("/api/processes")
     def api_list_processes(db: Session = Depends(get_db)) -> dict:
-        """Named processes with last run / next run / watermark for the cockpit."""
+        """Named workflows (Control UI). Alias of workflow list with dual slug keys."""
+        return _ui_list_workflows(db)
+
+    @app.get("/api/hub/workflows")
+    def api_hub_list_workflows(db: Session = Depends(get_db)) -> dict:
+        """Control UI workflow list (no API key; demo user)."""
+        return _ui_list_workflows(db)
+
+    @app.get("/api/hub/workflows/{workflow_id}")
+    def api_hub_get_workflow(workflow_id: str, db: Session = Depends(get_db)) -> dict:
+        """Control UI workflow detail: IR bindings + last run + graph meta."""
         repo = WorkflowRepository(db)
-        processes = []
-        for w in repo.list_workflows_with_slug(DEMO_USER_ID):
-            last = repo.get_last_run(w.id)
-            processes.append(
+        w = repo.get_workflow(workflow_id, DEMO_USER_ID)
+        if w is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        friendly = w.friendly_slug()
+        last = repo.get_last_run(w.id)
+        bindings = workflow_bindings(w.context, repo, DEMO_USER_ID)
+        ctx = json.loads(w.context or "{}")
+        return {
+            "workflow_id": w.id,
+            "slug": friendly,
+            "process_slug": friendly,
+            "name": w.name,
+            "status": w.status,
+            "task": w.task_description,
+            "scheduled_at": w.scheduled_at.isoformat() if w.scheduled_at else None,
+            "cron_expression": w.cron_expression,
+            "watermark": w.watermark_at.isoformat() if w.watermark_at else None,
+            "context": ctx,
+            "bindings": bindings,
+            "last_run": (
                 {
-                    "process_slug": w.process_slug,
-                    "workflow_id": w.id,
-                    "name": w.name,
-                    "status": w.status,
-                    "scheduled_at": w.scheduled_at.isoformat() if w.scheduled_at else None,
-                    "watermark": w.watermark_at.isoformat() if w.watermark_at else None,
-                    "last_run": (
-                        {
-                            "run_id": last.id,
-                            "status": last.status,
-                            "started_at": last.started_at.isoformat(),
-                            "completed_at": (
-                                last.completed_at.isoformat() if last.completed_at else None
-                            ),
-                        }
-                        if last
-                        else None
+                    "run_id": last.id,
+                    "status": last.status,
+                    "started_at": last.started_at.isoformat(),
+                    "completed_at": (
+                        last.completed_at.isoformat() if last.completed_at else None
                     ),
+                    "duration_ms": last.duration_ms,
                 }
-            )
-        return {"processes": processes}
+                if last
+                else None
+            ),
+        }
+
+    class HubConnectorCreate(BaseModel):
+        name: str
+        host: str = ""
+        public_key: str = ""
+        secret_key: str = ""
+        type: str = "langfuse"
+        env_key: str = "prod"
+
+    class HubConnectorPatch(BaseModel):
+        name: str | None = None
+        status: str | None = None
+
+    class HubConnectorEnvUpsert(BaseModel):
+        host: str | None = None
+        public_key: str | None = None
+        secret_key: str | None = None
+        is_default: bool = False
+        label: str | None = None
+
+    @app.get("/api/hub/connectors")
+    def api_hub_list_connectors(db: Session = Depends(get_db)) -> dict:
+        """Control UI sources list with env summaries."""
+        return _run_tool("list_connectors")
+
+    @app.post("/api/hub/connectors", status_code=201)
+    def api_hub_create_connector(payload: HubConnectorCreate) -> dict:
+        return _run_tool(
+            "create_connector",
+            name=payload.name,
+            host=payload.host,
+            public_key=payload.public_key,
+            secret_key=payload.secret_key,
+            type=payload.type,
+            env_key=payload.env_key,
+        )
+
+    @app.get("/api/hub/connectors/{connector_id}")
+    def api_hub_get_connector(connector_id: str) -> dict:
+        result = _run_tool("get_connector", connector_id=connector_id)
+        if result.get("error"):
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+    @app.patch("/api/hub/connectors/{connector_id}")
+    def api_hub_patch_connector(connector_id: str, payload: HubConnectorPatch) -> dict:
+        result = _run_tool(
+            "update_connector",
+            connector_id=connector_id,
+            name=payload.name,
+            status=payload.status,
+        )
+        if result.get("error"):
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+    @app.delete("/api/hub/connectors/{connector_id}")
+    def api_hub_delete_connector(connector_id: str) -> dict:
+        result = _run_tool("delete_connector", connector_id=connector_id)
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    @app.put("/api/hub/connectors/{connector_id}/envs/{env_key}")
+    def api_hub_upsert_env(
+        connector_id: str, env_key: str, payload: HubConnectorEnvUpsert
+    ) -> dict:
+        result = _run_tool(
+            "upsert_connector_env",
+            connector_id=connector_id,
+            env_key=env_key,
+            host=payload.host,
+            public_key=payload.public_key,
+            secret_key=payload.secret_key,
+            is_default=payload.is_default,
+            label=payload.label,
+        )
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    @app.delete("/api/hub/connectors/{connector_id}/envs/{env_key}")
+    def api_hub_delete_env(connector_id: str, env_key: str) -> dict:
+        result = _run_tool(
+            "delete_connector_env", connector_id=connector_id, env_key=env_key
+        )
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    @app.post("/api/hub/connectors/{connector_id}/test")
+    def api_hub_test_connector(connector_id: str, env: str | None = None) -> dict:
+        result = _run_tool("test_connector", connector_id=connector_id, env=env)
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    @app.get("/api/hub/email")
+    def api_hub_email_status() -> dict:
+        """Alias of settings email status (email is a destination type)."""
+        from navbe_notify.email_report import email_status_redacted
+
+        return email_status_redacted()
 
     @app.get("/api/runs/live")
     def api_live_runs(db: Session = Depends(get_db)) -> dict:
@@ -541,6 +952,7 @@ def _register_routes(app: FastAPI) -> None:
                     "run_id": run.id,
                     "workflow_id": run.workflow_id,
                     "process_slug": wf.process_slug if wf else None,
+                    "slug": (wf.friendly_slug() if wf else None),
                     "status": run.status,
                     "step": None,
                     "started_at": run.started_at.isoformat(),
@@ -574,11 +986,13 @@ def _register_routes(app: FastAPI) -> None:
                     "run_id": run.id,
                     "workflow_id": wf.id,
                     "process_slug": wf.process_slug,
+                    "slug": wf.friendly_slug(),
                     "workflow_name": wf.name,
                     "status": run.status,
                     "control": run.control,
                     "started_at": run.started_at.isoformat(),
                     "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                    "duration_ms": run.duration_ms,
                     "error": run.error,
                     "output": output,
                 }
@@ -599,16 +1013,22 @@ def _register_routes(app: FastAPI) -> None:
                 output = json.loads(run.output)
             except json.JSONDecodeError:
                 output = None
+        steps = repo.serialize_run_steps(run.id)
+        if output is not None and steps:
+            output = {**output, "steps": steps}
         return {
             "run_id": run.id,
             "workflow_id": run.workflow_id,
             "process_slug": wf.process_slug if wf else None,
+            "slug": wf.friendly_slug() if wf else None,
             "workflow_name": wf.name if wf else None,
             "status": run.status,
             "control": run.control,
             "started_at": run.started_at.isoformat(),
             "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "duration_ms": run.duration_ms,
             "error": run.error,
+            "steps": steps,
             "output": output,
         }
 
@@ -672,6 +1092,7 @@ def _register_routes(app: FastAPI) -> None:
                 "name": c.name,
                 "host": c.host,
                 "status": c.status,
+                "envs": repo.env_summary(c.id),
             }
             for c in repo.list_connectors(DEMO_USER_ID)
         ]
@@ -691,6 +1112,8 @@ def _register_routes(app: FastAPI) -> None:
                     "config_summary": {
                         "db_path": cfg.get("db_path"),
                         "table": cfg.get("table"),
+                        "provider": cfg.get("provider"),
+                        "from_addr": cfg.get("from_addr"),
                     },
                     "templates": templates,
                 }
@@ -722,14 +1145,14 @@ def _register_routes(app: FastAPI) -> None:
 
     @app.get("/api/settings/email")
     def api_email_status() -> dict:
-        """Redacted email/Resend status for the Control UI Settings page."""
+        """Legacy alias: redacted email destination status (prefer GET /api/hub/email)."""
         from navbe_notify.email_report import email_status_redacted
 
         return email_status_redacted()
 
     @app.post("/api/settings/resend")
     def api_configure_resend(payload: ResendSettingsRequest, db: Session = Depends(get_db)) -> dict:
-        """Save Resend API key (encrypted) via the same MCP tool path."""
+        """Legacy alias: save Resend and upsert destination type=email."""
         repo = WorkflowRepository(db)
         agent = WorkflowAgent(repo, scheduler_adapter)
         return dispatch(

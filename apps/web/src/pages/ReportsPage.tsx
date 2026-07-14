@@ -47,7 +47,7 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
         setSelectedWorkflowId((prev) => {
           if (prev) return prev;
           const daily = r.processes.find(
-            (p) => p.process_slug === "langfuse_daily",
+            (p) => (p.slug || p.process_slug) === "langfuse_daily",
           );
           return daily?.workflow_id ?? r.processes[0]?.workflow_id ?? null;
         });
@@ -77,7 +77,7 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
   const runQuery = useCallback(
     async (pageNum: number) => {
       if (!selectedWorkflowId || !selectedTemplate?.query_example) {
-        setError("Select a process and a template first.");
+        setError("Select a workflow and a template first.");
         return;
       }
       setLoading(true);
@@ -110,9 +110,9 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
     <section>
       <h2 style={{ marginTop: 0 }}>Reports</h2>
       <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
-        Run analysis templates against a process destination (same queries as
+        Run analysis templates against a workflow destination (same queries as
         MCP <code>list_analysis_templates</code>). For email delivery, open{" "}
-        <strong>Settings</strong>.
+        <strong>Connectors → Destinations</strong> (email destination).
       </p>
 
       <div
@@ -125,7 +125,7 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
         }}
       >
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 12, color: "#64748b" }}>Process</span>
+          <span style={{ fontSize: 12, color: "#64748b" }}>Workflow</span>
           <select
             value={selectedWorkflowId ?? ""}
             onChange={(e) => {
@@ -135,11 +135,11 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
             style={{ minWidth: 220, padding: "6px 8px" }}
           >
             {processes.length === 0 && (
-              <option value="">No processes yet</option>
+              <option value="">No workflows yet</option>
             )}
             {processes.map((p) => (
               <option key={p.workflow_id} value={p.workflow_id}>
-                {p.process_slug} — {p.name}
+                {p.slug || p.process_slug} — {p.name}
               </option>
             ))}
           </select>

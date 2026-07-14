@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import {
   type RunRow,
+  type RunStepTiming,
   pauseRunApi,
   resumeRunApi,
   stopRunApi,
 } from "../api/client";
+import { formatDurationMs } from "../lib/formatDuration";
 import { useDagStore } from "../store/dagStore";
 import { NavbeFlow } from "./dag/NavbeFlow";
 import { RunMetrics } from "./RunMetrics";
@@ -17,6 +19,18 @@ type Props = {
 };
 
 type Tab = "dag" | "report";
+
+function stepTimings(run: RunRow): RunStepTiming[] {
+  if (Array.isArray(run.steps) && run.steps.length > 0) return run.steps;
+  const raw = run.output?.steps;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (s): s is RunStepTiming =>
+      !!s &&
+      typeof s === "object" &&
+      typeof (s as { id?: unknown }).id === "string",
+  ) as RunStepTiming[];
+}
 
 /** Left drawer: per-run DAG + report, with Pause / Resume / Stop. */
 export function RunDetailSheet({ run, onClose, onUpdated }: Props) {
@@ -31,21 +45,17 @@ export function RunDetailSheet({ run, onClose, onUpdated }: Props) {
     run.status === "paused" ||
     run.control === "pause_requested" ||
     run.control === "cancel_requested";
+  const timings = stepTimings(run);
 
   useEffect(() => {
-    const steps = run.output?.steps;
-    if (Array.isArray(steps) && run.run_id) {
+    const steps = stepTimings(run);
+    if (steps.length > 0 && run.run_id) {
       seedSteps(
         run.run_id,
-        steps.filter(
-          (s): s is { id: string; status: string } =>
-            !!s &&
-            typeof s === "object" &&
-            typeof (s as { id?: unknown }).id === "string",
-        ) as Array<{ id: string; status: string }>,
+        steps.map((s) => ({ id: s.id, status: s.status })),
       );
     }
-  }, [run.run_id, run.output, seedSteps]);
+  }, [run.run_id, run.steps, run.output, seedSteps]);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -117,7 +127,7 @@ export function RunDetailSheet({ run, onClose, onUpdated }: Props) {
           >
             <div>
               <div style={{ fontWeight: 700, fontSize: 15 }}>
-                Run · {run.process_slug ?? "unnamed"}
+                Run · {run.slug ?? run.process_slug ?? "unnamed"}
                 {live ? (
                   <span
                     style={{
@@ -147,8 +157,11 @@ export function RunDetailSheet({ run, onClose, onUpdated }: Props) {
               ×
             </button>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <StatusBadge status={run.status} pulse={run.status === "running"} />
+            <span style={{ fontSize: 12, color: "#64748b" }}>
+              {formatDurationMs(run.duration_ms)}
+            </span>
             {(run.status === "running" ||
               run.control === "pause_requested") && (
               <button
@@ -218,17 +231,55 @@ export function RunDetailSheet({ run, onClose, onUpdated }: Props) {
 
         <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
           {tab === "dag" && (
-            <NavbeFlow
-              workflowId={workflowId}
-              runId={run.run_id}
-              selectedStep={selectedStep}
-              onSelectStep={setSelectedStep}
-              height={420}
-            />
+            <>
+              <NavbeFlow
+                workflowId={workflowId}
+                runId={run.run_id}
+                selectedStep={selectedStep}
+                onSelectStep={setSelectedStep}
+                height={360}
+              />
+              {timings.length > 0 && (
+                <ul
+                  style={{
+                    listStyle: "none",
+                    padding: 0,
+                    margin: "12px 0 0",
+                    fontSize: 13,
+                  }}
+                >
+                  {timings.map((s) => (
+                    <li
+                      key={`${s.id}-${s.attempt ?? 1}`}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "6px 0",
+                        borderBottom: "1px solid #f1f5f9",
+                        color: selectedStep === s.id ? "#0f172a" : "#64748b",
+                        fontWeight: selectedStep === s.id ? 600 : 400,
+                        cursor: "pointer",
+                      }}
+                      onClick={() => setSelectedStep(s.id)}
+                    >
+                      <span>{s.id}</span>
+                      <span>
+                        {s.status}
+                        {" · "}
+                        {formatDurationMs(s.duration_ms)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
           {tab === "report" && (
             <div>
-              <RunMetrics output={run.output} />
+              <RunMetrics
+                output={run.output}
+                durationMs={run.duration_ms}
+              />
               {typeof run.output?.report_date === "string" && (
                 <p style={{ fontSize: 13, marginTop: 12 }}>
                   Report date: <strong>{run.output.report_date}</strong>

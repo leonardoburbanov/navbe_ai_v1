@@ -3,12 +3,12 @@
 from navbe_mcp.tools import connectors as connectors
 from navbe_mcp.tools import daily_report as daily_report
 from navbe_mcp.tools import destinations as destinations
-from navbe_mcp.tools import get_process_status as get_process_status
+from navbe_mcp.tools import get_workflow_status as get_workflow_status
 from navbe_mcp.tools import langfuse_export as langfuse_export
 from navbe_mcp.tools import list as list_tools
 from navbe_mcp.tools import list_analysis_templates as list_analysis_templates
-from navbe_mcp.tools import list_processes as list_processes
 from navbe_mcp.tools import preview_workflow as preview_workflow
+from navbe_mcp.tools import propose_workflow as propose_workflow
 from navbe_mcp.tools import pull_events as pull_events
 from navbe_mcp.tools import query as query
 from navbe_mcp.tools import recall as recall
@@ -19,16 +19,17 @@ from navbe_mcp.tools import runs as runs
 from navbe_mcp.tools import schedule as schedule
 from navbe_mcp.tools import subscribe as subscribe
 from navbe_mcp.tools import suggest as suggest
+from navbe_mcp.tools import workflow_crud as workflow_crud
 
 __all__ = [
     "connectors",
     "daily_report",
     "destinations",
-    "get_process_status",
+    "get_workflow_status",
     "langfuse_export",
     "list_tools",
     "list_analysis_templates",
-    "list_processes",
+    "propose_workflow",
     "preview_workflow",
     "pull_events",
     "query",
@@ -40,4 +41,5 @@ __all__ = [
     "schedule",
     "subscribe",
     "suggest",
+    "workflow_crud",
 ]

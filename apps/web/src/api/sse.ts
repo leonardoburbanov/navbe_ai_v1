@@ -30,6 +30,7 @@ export type SseEvent = {
   workflow_id?: string;
   run_id?: string;
   process_slug?: string;
+  slug?: string;
   step?: string;
   status?: string;
   live_url?: string;
@@ -80,7 +81,7 @@ export function handleSsePayload(
 
   const scope = dagScope(event) ?? wf;
   const runId = event.run_id;
-  const slug = event.process_slug ?? null;
+  const slug = event.slug ?? event.process_slug ?? null;
 
   if (event.type === "run.started" || event.type === "run.preview.started") {
     dag.resetRun(scope);

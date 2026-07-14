@@ -11,6 +11,7 @@ import {
 } from "../api/client";
 import { RunDetailSheet } from "../components/RunDetailSheet";
 import { StatusBadge } from "../components/StatusBadge";
+import { formatDurationMs } from "../lib/formatDuration";
 
 type Props = {
   processSlug: string | null;
@@ -22,7 +23,7 @@ type Props = {
 
 const PAGE_SIZE = 20;
 
-/** Runs-first home: process filter + left sheet for DAG/report. */
+/** Runs-first home: workflow filter + left sheet for DAG/report. */
 export function RunsPage({
   processSlug,
   workflowId,
@@ -64,7 +65,7 @@ export function RunsPage({
         setProcesses(list);
         if (workflowId && !processSlug) {
           const p = list.find((x) => x.workflow_id === workflowId);
-          if (p) onSelectProcess(p.workflow_id, p.process_slug);
+          if (p) onSelectProcess(p.workflow_id, p.slug || p.process_slug);
         }
       })
       .catch(() => {
@@ -100,7 +101,7 @@ export function RunsPage({
     setSheetRun(r);
     onSelectRun(r.run_id);
     if (r.workflow_id) {
-      onSelectProcess(r.workflow_id, r.process_slug ?? "");
+      onSelectProcess(r.workflow_id, r.slug ?? r.process_slug ?? "");
     }
   };
 
@@ -146,7 +147,7 @@ export function RunsPage({
       >
         <h2 style={{ marginTop: 0, marginBottom: 0 }}>Runs</h2>
         <label style={{ fontSize: 13, color: "#64748b" }}>
-          Process{" "}
+          Filter by workflow{" "}
           <select
             value={workflowId ?? ""}
             onChange={(e) => {
@@ -156,14 +157,14 @@ export function RunsPage({
                 return;
               }
               const p = processes.find((x) => x.workflow_id === id);
-              onSelectProcess(id, p?.process_slug ?? "");
+              onSelectProcess(id, p?.slug || p?.process_slug || "");
             }}
             style={{ minWidth: 200, padding: "4px 8px", marginLeft: 6 }}
           >
-            <option value="">All processes</option>
+            <option value="">All workflows</option>
             {processes.map((p) => (
               <option key={p.workflow_id} value={p.workflow_id}>
-                {p.process_slug} — {p.name}
+                {p.slug || p.process_slug} — {p.name}
               </option>
             ))}
           </select>
@@ -194,10 +195,11 @@ export function RunsPage({
               <tr
                 style={{ textAlign: "left", borderBottom: "1px solid #e2e8f0" }}
               >
-                <th style={{ padding: 8 }}>Process</th>
+                <th style={{ padding: 8 }}>Workflow</th>
                 <th style={{ padding: 8 }}>Run</th>
                 <th style={{ padding: 8 }}>Status</th>
                 <th style={{ padding: 8 }}>Started</th>
+                <th style={{ padding: 8 }}>Duration</th>
                 <th style={{ padding: 8 }}>Completed</th>
                 <th style={{ padding: 8 }}>Actions</th>
               </tr>
@@ -215,7 +217,7 @@ export function RunsPage({
                   onClick={() => openRun(r)}
                 >
                   <td style={{ padding: 8, fontSize: 13 }}>
-                    {r.process_slug ?? "—"}
+                    {r.slug ?? r.process_slug ?? "—"}
                   </td>
                   <td
                     style={{
@@ -233,6 +235,9 @@ export function RunsPage({
                     />
                   </td>
                   <td style={{ padding: 8, fontSize: 13 }}>{r.started_at}</td>
+                  <td style={{ padding: 8, fontSize: 13 }}>
+                    {formatDurationMs(r.duration_ms)}
+                  </td>
                   <td style={{ padding: 8, fontSize: 13 }}>
                     {r.completed_at ?? "—"}
                   </td>

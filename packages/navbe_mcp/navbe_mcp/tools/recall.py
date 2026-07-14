@@ -14,6 +14,8 @@ def _recall_workflow(agent: WorkflowAgent, user_id: str, workflow_id: str) -> di
         "workflow_id": workflow.id,
         "agent_id": workflow.agent_id,
         "name": workflow.name,
+        "slug": workflow.friendly_slug(),
+        "process_slug": workflow.friendly_slug(),
         "status": workflow.status,
         "task": workflow.task_description,
         "scheduled_at": workflow.scheduled_at.isoformat(),

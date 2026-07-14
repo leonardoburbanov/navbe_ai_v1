@@ -120,8 +120,9 @@ All three MVPs share the same orchestration core, connector/destination plugins,
 │  Event bus (pub/sub) — agents + UI subscribe equally               │
 └──────────┬─────────────────┬─────────────────┬─────────────────────┘
            ▼                 ▼                 ▼
-     Connectors        Transforms        Destinations        Notify
-     Langfuse          tag / agg         DuckDB / SQLite     bus + SMTP email
+     Connectors        Transforms        Destinations
+     Langfuse          tag / agg         DuckDB / SQLite / email (Resend/SMTP)
+                                         (+ notify bus for run events)
      Folder / HTTP     compare / report
 ```
 
@@ -167,11 +168,11 @@ Navbe is the publisher of truth; AI agents are subscribers. The agent that start
 | Topic pattern | Examples |
 | --- | --- |
 | `run.{run_id}` | step progress, metrics, terminal state |
-| `workflow.{workflow_id}` | scheduled tick, lock acquired, run started |
-| `process.{slug}` | friendly alias, e.g. `process.langfuse_daily` — what users ask about |
+| `workflow.{slug}` | canonical process-level events (dual-published) |
+| `process.{slug}` | alias of `workflow.{slug}` for one sprint |
 | `system` | daemon up/down, needs_input globally |
 
-**Event shape (conceptual):** `id`, `ts`, `topic`, `type` (`run.started` / `run.progress` / `run.succeeded` / `run.failed` / `run.needs_input`), `workflow_id`, `run_id`, `process_slug`, `summary`, `metrics?`, `error?`.
+**Event shape (conceptual):** `id`, `ts`, `topic`, `type` (`run.started` / `run.progress` / `run.succeeded` / `run.failed` / `run.needs_input`), `workflow_id`, `run_id`, `slug` (also `process_slug` dual key), `summary`, `metrics?`, `error?`.
 
 **Subscriber model:**
 
@@ -181,7 +182,7 @@ Navbe is the publisher of truth; AI agents are subscribers. The agent that start
 
 **Shared status (not only push):**
 
-- `get_process_status(process_slug | workflow_id)` returns the live picture any agent would see: state, last run, progress %, watermark, recent events.
+- `get_workflow_status(slug | workflow_id)` returns the live picture any agent would see: state, last run, progress %, watermark, recent events.
 - Example: user in Hermes asks *"how is the Langfuse process going?"* → same answer as Cursor would get, because both read the hub.
 
 **Also:** desktop OS toasts and the in-app run feed are subscribers of the same bus (not a parallel notification path).
@@ -194,12 +195,11 @@ MCP is how agents *act*. The Control UI is how humans *see* and occasionally *st
 
 | View | Purpose |
 | --- | --- |
-| **Live execution** | Process list, run status, step metrics, logs/events, cancel / retry / respond to `needs_input`. |
-| **DAG canvas** | Modern, innovative visualization of Workflow IR: nodes (connector / transform / destination / control), edges (fan-out, fan-in, conditional), live state coloring per node during a run. Not a static boxes-and-arrows screenshot — interactive (zoom, focus step, open payload/metrics). |
-| **Catalog** | Available connectors, destinations, transforms, analysis templates — capability browser with status (configured / missing credentials / healthy). |
-| **Connections & secrets** | Create/edit/validate connections; redacted display; same flows agents elicit via MCP. |
-| **Destinations** | Switch DB, schema version, triggers, preview vs production. |
-| **Schedules** | Cron, overlap policy, next run, watermark. |
+| **Live execution** | Workflow/run list, status, step metrics, logs/events, cancel / retry / respond to `needs_input`. |
+| **DAG canvas** | Modern visualization of Workflow IR: nodes (connector / transform / destination / control), edges (fan-out, fan-in, conditional), live state coloring per node during a run. Interactive (zoom, focus step, open payload/metrics). |
+| **Connectors** | Top-level hub (`?page=connectors`): **Sources** (Langfuse + env credentials) and **Destinations** (DuckDB / SQLite / **email**). Email is a destination type, not a Settings or Email nav category. Settings page is removed; legacy `?page=settings` redirects here. |
+| **Reports** | Analysis templates over destinations; email preview/schedule/send live under Connectors → Destinations (email). |
+| **Schedules** | Cron, overlap policy, next run, watermark (via Workflows + MCP). |
 
 **DAG design intent**
 
@@ -287,10 +287,10 @@ Node
 
 ### Run model
 
-- `Run`: workflow_id, status, started_at, finished_at, trigger, watermark_in/out, error, `process_slug?`
+- `Run`: workflow_id, status, started_at, finished_at, trigger, watermark_in/out, error, `slug?`
 - `RunStep`: node_id, status, attempt, metrics (rows_in/out, bytes), artifact refs
 - Checkpoint: LangGraph thread_id ↔ run_id for resume after `needs_input` or crash
-- `Process`: optional friendly handle (`langfuse_daily`) → workflow_id; what humans/agents name in chat
+- `slug`: friendly handle on the workflow (`langfuse_daily`) — what humans/agents name in chat (legacy column `process_slug` still dual-written)
 
 ### Event & subscriber model
 
@@ -370,25 +370,31 @@ Tools should feel like *workflows*, not raw SDK wrappers. Prefer fewer, higher-l
 
 | Tool | Purpose |
 | --- | --- |
-| `list_connectors` / `list_destinations` | Discover capabilities |
-| `create_connection` | Elicit + validate + store credentials |
-| `create_destination` | Default DuckDB path; confirm |
+| `list_connectors` / `create_connector` / `get_connector` / `update_connector` / `delete_connector` | Source connector CRUD |
+| `upsert_connector_env` / `delete_connector_env` / `test_connector` | Per-env credentials + probe |
+| `list_destinations` / `create_destination` | Destinations including `duckdb`, `sqlite`, `email` |
 | `update_destination` / `switch_destination` | Change DB path/engine anytime; optional data migrate; confirm |
 | `list_destination_triggers` / `upsert_destination_trigger` / `delete_destination_trigger` | Manage SQL/engine triggers on the data plane |
-| `propose_workflow` | From intent + template id → draft IR (not running yet) |
-| `confirm_workflow` | Persist IR after user confirmation |
+| `propose_workflow` | NL intent → draft IR (not running yet); returns draft + needs_input |
+| `confirm_workflow` | Persist draft IR + slug + optional schedule |
+| `list_workflows` | All workflows: slug, schedule, nodes, last run |
+| `get_workflow_status` | Shared live status by `slug` or `workflow_id` (any agent) |
+| `update_workflow` / `delete_workflow` | Patch metadata / soft-archive |
+| `set_workflow_trigger` / `set_workflow_source` / `set_workflow_destination` | Bind trigger + connector (+ optional `connector_env`) + destination |
+| `set_workflow_step_connector` | Per-step `graph.node_config` override (connector/env/config) |
+| `add_workflow_step` / `remove_workflow_step` / `connect_workflow_steps` | Mutate graph; auto-wire edges when unambiguous |
 | `list_analysis_templates` | Templates affordable for current destination |
 | `preview_workflow` | Dry/sandbox run: sample, validate schema/triggers, no prod watermark advance |
 | `run_workflow` | Manual run now (production) |
 | `schedule_workflow` | Attach cron + overlap policy |
 | `get_run` / `list_runs` | Status and metrics |
-| `get_process_status` | Shared live status by `process_slug` or workflow_id (any agent) |
-| `list_processes` | In-flight and recent processes visible to all peers |
-| `subscribe` / `unsubscribe` | Register interest in topics (`process.langfuse_daily`, `run.*`, …) |
+| `get_process_status` / `list_processes` | Deprecated aliases for get_workflow_status / list_workflows |
+| `suggest_workflow` | Deprecated alias for propose_workflow |
+| `subscribe` / `unsubscribe` | Register interest in topics (`workflow.langfuse_daily`, `process.*`, `run.*`, …) |
 | `pull_events` | Poll bus since subscriber cursor (multi-agent fan-out) |
 | `replay_trace_to_api` | MVP B one-shot or save-as-workflow |
-| `configure_resend` | Elicit + store Resend API key (encrypted); preferred email channel |
-| `configure_email` | Elicit + validate SMTP; store encrypted secrets (fallback) |
+| `configure_resend` | Store Resend API key; upsert destination `type=email`; `ui_url` → Connectors Destinations |
+| `configure_email` | SMTP fallback; same email destination upsert |
 | `preview_daily_report` | Build HTML retailer report to `~/.navbe/reports/` (no send) |
 | `schedule_daily_report` | Schedule `langfuse_daily_report` end-of-day email (default `0 23 * * *`) |
 | `send_daily_report` | Run report workflow now and send HTML email |
@@ -421,7 +427,7 @@ Tools should feel like *workflows*, not raw SDK wrappers. Prefer fewer, higher-l
 | Event bus | SQLite append-only + in-process pub/sub | Poll MCP + optional SSE; not Kafka |
 | Email notify | Resend API (primary) or SMTP | HTML reports; secrets Fernet-encrypted in `~/.navbe` |
 | Secrets | OS keyring or Fernet at rest in `~/.navbe` | Never in workflow IR plaintext |
-| Control UI | React (Next.js or Vite) + DAG canvas (e.g. React Flow) | Monitor, catalog, live graph; `pnpm` |
+| Control UI | Vite+React + DAG canvas | Runs, Workflows, Reports, **Connectors** (sources / destinations); `pnpm` |
 | Desktop shell | Tauri (preferred) or Electron | Installer + tray; loads Control UI; manages daemon |
 | Containers | Docker optional | Daemon + volume for `~/.navbe`; UI optional |
 
@@ -526,8 +532,8 @@ Apply these on every change. If a design violates them, simplify before merging 
 - Tool responses include **next_step** hints (`create_destination`, `confirm_workflow`, `preview_workflow`, …).
 - Prefer one conversational path that chains tools over exposing 50 low-level RPCs.
 - Offer **preview before schedule** when creating or changing destinations, triggers, or transforms.
-- Scheduled workflows run without the chat session; any agent recovers state via `get_process_status` / `pull_events`.
-- On attach, agents should `subscribe` to relevant `process.*` topics (or `process.*` wildcard) so they stay aligned with peers.
+- Scheduled workflows run without the chat session; any agent recovers state via `get_workflow_status` / `pull_events`.
+- On attach, agents should `subscribe` to relevant `workflow.*` topics (or `workflow.*` / `process.*` wildcard) so they stay aligned with peers.
 
 ### Data
 
@@ -554,7 +560,7 @@ Apply these on every change. If a design violates them, simplify before merging 
 1. From Cursor: agent connects Langfuse via Navbe MCP, confirms DuckDB, schedules daily incremental sync, and can query/report tokens & cost by `retailer_id` tag.
 2. From Cursor: agent replays a `langfuse_trace_id` against an authenticated API, stores results, and returns a comparison.
 3. Second scheduled run does not duplicate rows and does not overlap an in-flight run.
-4. While a Langfuse process runs, **Hermes and Claude** (separate MCP clients) can both call `get_process_status("langfuse_daily")` / `pull_events` and see the same progress; completion fans out to all subscribers.
+4. While a Langfuse workflow runs, **Hermes and Claude** (separate MCP clients) can both call `get_workflow_status("langfuse_daily")` / `pull_events` and see the same progress; completion fans out to all subscribers.
 5. After a non-breaking destination/connector schema change, the next scheduled run migrates (if needed) and completes without manual rebuild; agents see `schema.warning` / `schema.changed` events when drift was absorbed.
 6. User can preview a workflow, switch the destination database, and add a destination trigger via MCP without rewriting the workflow IR from scratch.
 7. Control UI shows live execution and a modern DAG for the Langfuse workflow; catalog lists available connectors/destinations; UI and MCP agree on process status.
@@ -566,23 +572,28 @@ Apply these on every change. If a design violates them, simplify before merging 
 
 | Term | Meaning |
 | --- | --- |
-| Connector | Pulls or receives data (Langfuse, folder, HTTP) |
-| Destination | Where curated data lives (DuckDB, SQLite) |
+| Connector | Source that pulls or receives data (Langfuse, folder, HTTP); credentials live in **environments** (`staging` / `testing` / `prod` / custom) |
+| Connector environment | Named credential pack on a connector; Fernet-encrypted secrets; workflow binds `connector_env` (default) or per-step override |
+| Destination | Where results land or are delivered: DuckDB, SQLite, or **email** (Resend/SMTP notify destination) |
+| Connectors hub | Control UI page (`?page=connectors&tab=sources\|destinations`) — human credential surface for sources and destinations |
+| Workflow | Durable IR + schedule + slug; what agents and the Control UI name |
 | Workflow IR | Serializable graph definition |
 | Template | Packaged analysis or workflow recipe |
 | Watermark | Incremental cursor for extract |
-| Run | One execution instance of a workflow |
-| Process | Friendly named handle for a workflow/run stream agents ask about |
+| Run | One execution instance of a workflow; stores `duration_ms` wall-clock total |
+| Run step | One LangGraph node within a run (`workflow_run_steps`); stores per-step `duration_ms` |
+| Slug | Friendly handle on a workflow (`langfuse_daily`); legacy alias: process_slug / “process” |
+| Process | Deprecated synonym of workflow slug — keep only in event/API aliases |
 | Event bus | Append-only pub/sub log shared by all agents |
 | Subscriber | An AI agent or UI client with its own event cursor |
 | Schema version | Monotonic destination/control-plane DDL generation; migrations are additive-first |
 | Extras / payload | JSON column that absorbs unknown upstream fields without failing the load |
 | Preview | Sandbox/dry run that does not advance production watermarks |
 | Destination trigger | Engine SQL trigger (or equivalent) managed via Navbe and applied to the data plane |
-| Control UI | Human cockpit: monitor, DAG canvas, catalog (desktop or local web) |
+| Control UI | Human cockpit: monitor, DAG, Workflows, Reports, **Connectors** (sources / destinations including email) |
 | DAG canvas | Interactive visualization of Workflow IR with live run state |
 | Elicitation | Structured ask for missing config/secrets |
-| Daily email report | HTML email from retailer mart (DoD + 7d run-rate projections) via SMTP |
+| Daily email report | HTML email from retailer mart (DoD + 7d run-rate projections) via Resend/SMTP email destination |
 
 ---
 
@@ -597,3 +608,4 @@ Apply these on every change. If a design violates them, simplify before merging 
 7. Obey modularity, SOLID, KISS, DRY, and Clean Code; if principles conflict, KISS + readability win over speculative abstraction.
 8. Never hard-code a single database file into workflow logic — destinations are swappable; prefer preview before destructive production runs.
 9. Keep MCP the agent product and Control UI the human cockpit; both share one daemon — do not build a second orchestration path inside the frontend.
+10. Human credential and destination surface is the **Connectors** page (Sources | Destinations); do not reintroduce a Settings page or a top-level Email category — email is destination `type=email`.

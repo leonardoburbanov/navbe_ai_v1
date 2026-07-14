@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 # Step name → React Flow custom node type
 _STEP_NODE_TYPES: dict[str, str] = {
@@ -67,3 +68,30 @@ def workflow_to_flow_graph(context_json: str) -> dict:
         for src, dst in edges_raw
     ]
     return {"nodes": nodes, "edges": edges}
+
+
+def workflow_bindings(context_json: str, repo: Any, user_id: str) -> dict:
+    """Trigger + bound connector/destination labels for the Workflows detail panel."""
+    context = json.loads(context_json) if context_json else {}
+    inp = context.get("input") or {}
+    trigger = context.get("trigger") or {}
+    connector_id = inp.get("connector_id") or inp.get("connection_id")
+    destination_id = inp.get("destination_id")
+    connector_name = None
+    destination_name = None
+    if connector_id:
+        c = repo.get_connector(connector_id, user_id)
+        connector_name = c.name if c else None
+    if destination_id:
+        d = repo.get_destination(destination_id, user_id)
+        destination_name = d.name if d else None
+    graph = context.get("graph") or {}
+    return {
+        "trigger": trigger,
+        "connector_id": connector_id,
+        "connector_name": connector_name,
+        "destination_id": destination_id,
+        "destination_name": destination_name,
+        "entry": graph.get("entry"),
+        "node_count": len(graph.get("nodes") or []),
+    }

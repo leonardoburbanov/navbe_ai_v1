@@ -41,6 +41,22 @@ def decrypt(token: str) -> str:
     return get_fernet().decrypt(token.encode("ascii")).decode("utf-8")
 
 
+def encrypt_json(payload: dict) -> str:
+    """Encrypt a JSON-serializable dict."""
+    import json
+
+    return encrypt(json.dumps(payload))
+
+
+def decrypt_json(token: str) -> dict:
+    """Decrypt a token produced by :func:`encrypt_json`."""
+    import json
+
+    if not token:
+        return {}
+    return json.loads(decrypt(token))
+
+
 def secret_key_path() -> Path:
     """Return the path to the Fernet key file."""
     return _KEY_PATH

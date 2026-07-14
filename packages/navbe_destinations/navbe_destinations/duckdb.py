@@ -44,7 +44,7 @@ OBSERVATION_FIELDS = [
     "total_cost",
     "extras",
 ]
-DESTINATION_TYPES = {"csv_file", "duckdb"}
+DESTINATION_TYPES = {"csv_file", "duckdb", "sqlite", "email"}
 
 SCHEMA_VERSION = 1
 

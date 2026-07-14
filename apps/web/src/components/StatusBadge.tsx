@@ -2,7 +2,7 @@ import { statusColor } from "../statusColors";
 
 type Props = { status: string; pulse?: boolean };
 
-/** Colored status pill for process/run rows. */
+/** Colored status pill for workflow/run rows. */
 export function StatusBadge({ status, pulse = false }: Props) {
   const color = statusColor(status === "completed" ? "succeeded" : status);
   return (

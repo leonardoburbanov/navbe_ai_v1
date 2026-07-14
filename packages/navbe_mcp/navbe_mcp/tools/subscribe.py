@@ -27,7 +27,7 @@ def _subscribe(
     """Register as a named subscriber; then poll with pull_events."""
     _ = agent, user_id
     bus.register_subscriber(subscriber_id)
-    topic_list = topics or ["process.*", "run.*"]
+    topic_list = topics or ["workflow.*", "process.*", "run.*"]
     return SubscribeResult(
         subscriber_id=subscriber_id,
         registered=True,
@@ -51,7 +51,7 @@ register(
         "topics": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Topic patterns to watch, e.g. ['process.*', 'run.*']",
+            "description": "Topic patterns to watch, e.g. ['workflow.*', 'process.*', 'run.*']",
         },
     },
 )

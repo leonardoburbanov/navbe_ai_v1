@@ -377,17 +377,19 @@ def send_email_report(state: dict) -> dict:
         return {"error": "missing report_payload", "email_sent": False}
     payload = RetailerReportPayload.model_validate(raw)
     html = render_retailer_daily_html(payload)
-    process_slug = state.get("process_slug") or "langfuse_daily_report"
-    topic = f"process.{process_slug}"
+    process_slug = state.get("slug") or state.get("process_slug") or "langfuse_daily_report"
+    # ponytail: dual-publish report topics one sprint
+    topics = [f"process.{process_slug}", f"workflow.{process_slug}"]
     preview_only = state.get("mode") == "preview" or state.get("preview_only")
 
     path = save_report_preview(html, payload.report_date)
     if preview_only:
-        events.publish(
-            topic,
-            "report.previewed",
-            {"report_date": payload.report_date, "path": str(path), "totals": payload.totals},
-        )
+        for topic in topics:
+            events.publish(
+                topic,
+                "report.previewed",
+                {"report_date": payload.report_date, "path": str(path), "totals": payload.totals},
+            )
         return {
             "email_sent": False,
             "preview_path": str(path),
@@ -412,7 +414,8 @@ def send_email_report(state: dict) -> dict:
         }
 
     if not email_configured():
-        events.publish(topic, "report.failed", {"error": "email not configured"})
+        for topic in topics:
+            events.publish(topic, "report.failed", {"error": "email not configured"})
         return {
             "email_sent": False,
             "needs_input": {
@@ -427,20 +430,21 @@ def send_email_report(state: dict) -> dict:
     try:
         send_meta = send_html_email(to_list, subject, html)
     except Exception as e:
-        events.publish(topic, "report.failed", {"error": str(e), "report_date": payload.report_date})
+        for topic in topics:
+            events.publish(
+                topic, "report.failed", {"error": str(e), "report_date": payload.report_date}
+            )
         return {"email_sent": False, "error": str(e), "preview_path": str(path)}
 
-    events.publish(
-        topic,
-        "report.sent",
-        {
-            "report_date": payload.report_date,
-            "to": to_list,
-            "path": str(path),
-            "totals": payload.totals,
-            "provider": send_meta.get("provider"),
-        },
-    )
+    sent_payload = {
+        "report_date": payload.report_date,
+        "to": to_list,
+        "path": str(path),
+        "totals": payload.totals,
+        "provider": send_meta.get("provider"),
+    }
+    for topic in topics:
+        events.publish(topic, "report.sent", sent_payload)
     return {
         "email_sent": True,
         "preview_path": str(path),

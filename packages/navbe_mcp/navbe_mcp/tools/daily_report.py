@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from navbe_core.agent import WorkflowAgent
 from navbe_core.models_report import ResendConfig, SmtpConfig
 from navbe_notify.email_report import (
@@ -42,11 +44,31 @@ def _configure_resend(
     if probe != "ok":
         return {"status": "rejected", "probe": probe, "next_step": "fix api_key / from_addr"}
     save_resend_config(cfg)
+    # Ensure a destination type=email exists for the Connectors Destinations tab
+    existing = [
+        d for d in agent.repo.list_destinations(user_id) if d.type == "email"
+    ]
+    if not existing:
+        agent.repo.create_destination(
+            user_id=user_id,
+            type="email",
+            name="Email (Resend)",
+            config={"provider": "resend", "from_addr": cfg.from_addr},
+        )
+    else:
+        d = existing[0]
+        conf = json.loads(d.config or "{}")
+        conf.update({"provider": "resend", "from_addr": cfg.from_addr})
+        d.config = json.dumps(conf)
+        agent.repo.db.commit()
+    from navbe_core.live_url import connectors_ui_url
+
     return {
         "status": "saved",
         "provider": "resend",
         "from_addr": cfg.from_addr,
         "probe": probe,
+        "ui_url": connectors_ui_url(tab="destinations", type="email"),
         "next_step": "preview_daily_report then send_daily_report",
     }
 
@@ -80,11 +102,31 @@ def _configure_email(
     )
     save_smtp_config(cfg)
     probe = probe_smtp(cfg)
-    return ConfigureEmailResult(
+    existing = [
+        d for d in agent.repo.list_destinations(user_id) if d.type == "email"
+    ]
+    if not existing:
+        agent.repo.create_destination(
+            user_id=user_id,
+            type="email",
+            name="Email (SMTP)",
+            config={"provider": "smtp", "from_addr": from_addr, "host": host},
+        )
+    else:
+        d = existing[0]
+        conf = json.loads(d.config or "{}")
+        conf.update({"provider": "smtp", "from_addr": from_addr, "host": host})
+        d.config = json.dumps(conf)
+        agent.repo.db.commit()
+    from navbe_core.live_url import connectors_ui_url
+
+    result = ConfigureEmailResult(
         status="saved",
         probe=probe,
         next_step="preview_daily_report" if probe == "ok" else "fix SMTP credentials",
     ).model_dump()
+    result["ui_url"] = connectors_ui_url(tab="destinations", type="email")
+    return result
 
 
 def _preview_daily_report(

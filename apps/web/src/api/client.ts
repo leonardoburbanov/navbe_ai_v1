@@ -1,30 +1,67 @@
 /** Typed fetch wrappers for Control UI → daemon REST. */
 
-export type ProcessRow = {
-  process_slug: string;
+export type WorkflowRow = {
+  slug: string;
+  process_slug: string; // dual key one sprint
   workflow_id: string;
   name: string;
   status: string;
   scheduled_at: string | null;
+  cron_expression?: string | null;
   watermark: string | null;
+  node_count?: number;
+  nodes?: string[];
+  connector_name?: string | null;
+  destination_name?: string | null;
+  trigger?: { type?: string; cron?: string | null };
   last_run: {
     run_id: string;
     status: string;
     started_at: string;
     completed_at: string | null;
+    duration_ms?: number | null;
   } | null;
+};
+
+/** @deprecated use WorkflowRow */
+export type ProcessRow = WorkflowRow;
+
+export type WorkflowDetail = WorkflowRow & {
+  task?: string;
+  context?: Record<string, unknown>;
+  bindings?: {
+    trigger?: { type?: string; cron?: string | null };
+    connector_id?: string | null;
+    connector_name?: string | null;
+    destination_id?: string | null;
+    destination_name?: string | null;
+    entry?: string;
+    node_count?: number;
+  };
+};
+
+export type RunStepTiming = {
+  id: string;
+  status: string;
+  duration_ms?: number | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  attempt?: number;
 };
 
 export type RunRow = {
   run_id: string;
   workflow_id?: string;
   process_slug?: string | null;
+  slug?: string | null;
   workflow_name?: string | null;
   status: string;
   control?: string | null;
   started_at: string;
   completed_at: string | null;
+  duration_ms?: number | null;
   error?: string | null;
+  steps?: RunStepTiming[];
   output?: Record<string, unknown> | null;
 };
 
@@ -134,8 +171,20 @@ export function fetchHealth(): Promise<{ status: string }> {
   return getJson("/health");
 }
 
-export function fetchProcesses(): Promise<{ processes: ProcessRow[] }> {
+export function fetchWorkflows(): Promise<{
+  workflows: WorkflowRow[];
+  processes?: WorkflowRow[];
+}> {
+  return getJson("/api/hub/workflows");
+}
+
+/** @deprecated use fetchWorkflows */
+export function fetchProcesses(): Promise<{ processes: WorkflowRow[] }> {
   return getJson("/api/processes");
+}
+
+export function fetchWorkflow(workflowId: string): Promise<WorkflowDetail> {
+  return getJson(`/api/hub/workflows/${workflowId}`);
 }
 
 export function fetchRuns(
@@ -146,9 +195,9 @@ export function fetchRuns(
   return getJson(`/api/runs/${workflowId}?page=${page}&page_size=${pageSize}`);
 }
 
-/** Cross-process runs (Runs-first UI). Empty processSlug = all. */
+/** Cross-workflow runs (Runs-first UI). Empty slug = all. */
 export function fetchAllRuns(
-  processSlug?: string | null,
+  workflowSlug?: string | null,
   page = 1,
   pageSize = 20,
 ): Promise<{ runs: RunRow[]; page?: number; total?: number }> {
@@ -156,7 +205,7 @@ export function fetchAllRuns(
     page: String(page),
     page_size: String(pageSize),
   });
-  if (processSlug) params.set("process_slug", processSlug);
+  if (workflowSlug) params.set("process_slug", workflowSlug);
   return getJson(`/api/runs?${params.toString()}`);
 }
 
@@ -197,6 +246,7 @@ export type LiveRunApiRow = {
   run_id: string;
   workflow_id: string;
   process_slug: string | null;
+  slug?: string | null;
   status: string;
   step: string | null;
   started_at: string;
@@ -222,7 +272,9 @@ export function queryWorkflowDestination(
 }
 
 export function fetchEmailStatus(): Promise<EmailStatus> {
-  return getJson("/api/settings/email");
+  return getJson<EmailStatus>("/api/hub/email").catch(() =>
+    getJson<EmailStatus>("/api/settings/email"),
+  );
 }
 
 export function configureResendApi(
@@ -233,6 +285,95 @@ export function configureResendApi(
     api_key: apiKey,
     from_addr: fromAddr,
   });
+}
+
+export type ConnectorEnvSummary = {
+  env_key: string;
+  label?: string | null;
+  is_default: boolean;
+  status: string;
+  public_config?: Record<string, string>;
+  has_secrets?: boolean;
+};
+
+export type ConnectorHubRow = {
+  connector_id: string;
+  name: string;
+  type: string;
+  status: string;
+  host?: string;
+  envs: ConnectorEnvSummary[];
+};
+
+export function fetchHubConnectors(): Promise<{
+  connectors: ConnectorHubRow[];
+  count?: number;
+}> {
+  return getJson("/api/hub/connectors");
+}
+
+export function createHubConnector(body: {
+  name: string;
+  host?: string;
+  public_key?: string;
+  secret_key?: string;
+  type?: string;
+  env_key?: string;
+}): Promise<ConnectorHubRow> {
+  return postJson("/api/hub/connectors", body);
+}
+
+export function deleteHubConnector(
+  connectorId: string,
+): Promise<Record<string, unknown>> {
+  return fetch(`/api/hub/connectors/${connectorId}`, { method: "DELETE" }).then(
+    async (res) => {
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+  );
+}
+
+export function upsertHubConnectorEnv(
+  connectorId: string,
+  envKey: string,
+  body: {
+    host?: string;
+    public_key?: string;
+    secret_key?: string;
+    is_default?: boolean;
+    label?: string;
+  },
+): Promise<ConnectorHubRow> {
+  return fetch(`/api/hub/connectors/${connectorId}/envs/${encodeURIComponent(envKey)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    return res.json();
+  });
+}
+
+export function deleteHubConnectorEnv(
+  connectorId: string,
+  envKey: string,
+): Promise<Record<string, unknown>> {
+  return fetch(
+    `/api/hub/connectors/${connectorId}/envs/${encodeURIComponent(envKey)}`,
+    { method: "DELETE" },
+  ).then(async (res) => {
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    return res.json();
+  });
+}
+
+export function testHubConnector(
+  connectorId: string,
+  env?: string,
+): Promise<Record<string, unknown>> {
+  const q = env ? `?env=${encodeURIComponent(env)}` : "";
+  return postJson(`/api/hub/connectors/${connectorId}/test${q}`);
 }
 
 export function previewDailyReportApi(

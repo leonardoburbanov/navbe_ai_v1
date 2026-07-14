@@ -1,5 +1,8 @@
+import { formatDurationMs } from "../lib/formatDuration";
+
 type Props = {
   output?: Record<string, unknown> | null;
+  durationMs?: number | null;
 };
 
 function num(v: unknown): number | null {
@@ -11,32 +14,34 @@ function str(v: unknown): string | null {
 }
 
 /** Compact metrics from a run's output payload. */
-export function RunMetrics({ output }: Props) {
-  if (!output || Object.keys(output).length === 0) {
+export function RunMetrics({ output, durationMs }: Props) {
+  if ((!output || Object.keys(output).length === 0) && durationMs == null) {
     return <span style={{ fontSize: 12, color: "#94a3b8" }}>No metrics</span>;
   }
 
   const items: string[] = [];
-  const traces = num(output.trace_count) ?? num(output.traces_written);
-  const obs = num(output.observation_count) ?? num(output.observations_written);
+  if (durationMs != null) items.push(formatDurationMs(durationMs));
+  const traces = num(output?.trace_count) ?? num(output?.traces_written);
+  const obs =
+    num(output?.observation_count) ?? num(output?.observations_written);
   if (traces != null) items.push(`${traces} traces`);
   if (obs != null) items.push(`${obs} observations`);
-  if (output.mart_refreshed === true) items.push("mart refreshed");
-  if (output.email_sent === true) items.push("email sent");
-  if (output.email_skipped === true) items.push("email skipped");
+  if (output?.mart_refreshed === true) items.push("mart refreshed");
+  if (output?.email_sent === true) items.push("email sent");
+  if (output?.email_skipped === true) items.push("email skipped");
   const reportPath =
-    str(output.preview_path) ??
-    str(output.report_path) ??
-    str(output.html_path);
+    str(output?.preview_path) ??
+    str(output?.report_path) ??
+    str(output?.html_path);
   if (reportPath) items.push(`report: ${reportPath}`);
-  const reportDate = str(output.report_date);
+  const reportDate = str(output?.report_date);
   if (reportDate) items.push(`date ${reportDate}`);
-  const provider = str(output.provider);
+  const provider = str(output?.provider);
   if (provider) items.push(`via ${provider}`);
-  const err = str(output.error);
+  const err = str(output?.error);
   if (err) items.push(`error: ${err}`);
 
-  const compare = output.compare_result;
+  const compare = output?.compare_result;
   if (compare && typeof compare === "object") {
     const c = compare as {
       identical?: boolean;
@@ -68,7 +73,7 @@ export function RunMetrics({ output }: Props) {
     "report_payload",
     "steps",
   ]);
-  for (const [k, v] of Object.entries(output)) {
+  for (const [k, v] of Object.entries(output ?? {})) {
     if (known.has(k)) continue;
     if (
       typeof v === "boolean" ||

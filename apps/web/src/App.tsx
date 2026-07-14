@@ -9,32 +9,46 @@ import { fetchLiveRuns } from "./api/client";
 import { handleSsePayload, useSSE } from "./api/sse";
 import { HealthBar } from "./components/HealthBar";
 import { LiveRunsStrip } from "./components/LiveRunsStrip";
+import { ConnectorsPage } from "./pages/ConnectorsPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { RunsPage } from "./pages/RunsPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { WorkflowsPage } from "./pages/WorkflowsPage";
 import { useDagStore } from "./store/dagStore";
 import { useLiveRunStore } from "./store/liveRunStore";
-import { useProcessStore } from "./store/processStore";
+import { useWorkflowStore } from "./store/workflowStore";
 
-type Page = "runs" | "reports" | "settings";
+type Page = "runs" | "workflows" | "reports" | "connectors";
+type ConnectorsTab = "sources" | "destinations";
 
-const PAGES: Page[] = ["runs", "reports", "settings"];
+const PAGES: Page[] = ["runs", "workflows", "reports", "connectors"];
 
 function readUrlState(): {
   page: Page;
   workflowId: string | null;
   runId: string | null;
+  connectorsTab: ConnectorsTab;
+  focusType: string | null;
 } {
   const params = new URLSearchParams(window.location.search);
   const pageRaw = params.get("page") ?? "runs";
-  // Legacy deep links (dag/processes/replays/catalog) land on Runs.
-  const page = (
-    PAGES.includes(pageRaw as Page) ? pageRaw : "runs"
-  ) as Page;
+  // Legacy settings → connectors destinations
+  let page: Page;
+  if (pageRaw === "settings") {
+    page = "connectors";
+  } else {
+    page = (PAGES.includes(pageRaw as Page) ? pageRaw : "runs") as Page;
+  }
+  const tabRaw = params.get("tab") ?? "sources";
+  const connectorsTab: ConnectorsTab =
+    tabRaw === "destinations" || pageRaw === "settings"
+      ? "destinations"
+      : "sources";
   return {
     page,
     workflowId: params.get("workflow"),
     runId: params.get("run"),
+    connectorsTab,
+    focusType: params.get("type"),
   };
 }
 
@@ -42,11 +56,17 @@ function writeUrlState(
   page: Page,
   workflowId: string | null,
   runId: string | null,
+  connectorsTab: ConnectorsTab,
+  focusType: string | null,
 ) {
   const params = new URLSearchParams();
   params.set("page", page);
   if (workflowId) params.set("workflow", workflowId);
   if (runId) params.set("run", runId);
+  if (page === "connectors") {
+    params.set("tab", connectorsTab);
+    if (focusType) params.set("type", focusType);
+  }
   const next = `${window.location.pathname}?${params.toString()}`;
   window.history.replaceState(null, "", next);
 }
@@ -68,13 +88,17 @@ export default function App() {
     initial.workflowId,
   );
   const [runId, setRunId] = useState<string | null>(initial.runId);
-  const [processSlug, setProcessSlug] = useState("");
+  const [workflowSlug, setWorkflowSlug] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
+  const [connectorsTab, setConnectorsTab] = useState<ConnectorsTab>(
+    initial.connectorsTab,
+  );
+  const [focusType, setFocusType] = useState<string | null>(initial.focusType);
   const [sseOk, setSseOk] = useState(true);
 
   const patchStep = useDagStore((s) => s.patchStep);
   const resetRun = useDagStore((s) => s.resetRun);
-  const patchStatus = useProcessStore((s) => s.patchStatus);
+  const patchStatus = useWorkflowStore((s) => s.patchStatus);
   const liveUpsert = useLiveRunStore((s) => s.upsert);
   const liveSetStep = useLiveRunStore((s) => s.setStep);
   const liveComplete = useLiveRunStore((s) => s.complete);
@@ -92,8 +116,8 @@ export default function App() {
   }, [liveRunsMap]);
 
   useEffect(() => {
-    writeUrlState(page, workflowId, runId);
-  }, [page, workflowId, runId]);
+    writeUrlState(page, workflowId, runId, connectorsTab, focusType);
+  }, [page, workflowId, runId, connectorsTab, focusType]);
 
   useEffect(() => {
     fetchLiveRuns()
@@ -109,7 +133,7 @@ export default function App() {
             return {
               runId: row.run_id,
               workflowId: row.workflow_id,
-              processSlug: row.process_slug,
+              processSlug: row.slug ?? row.process_slug,
               status: st,
               step: row.step,
               startedAt: Date.parse(row.started_at) || Date.now(),
@@ -148,6 +172,7 @@ export default function App() {
           workflow_id?: string;
           run_id?: string;
           process_slug?: string;
+          slug?: string;
           step?: string;
         };
         handleSsePayload(
@@ -185,13 +210,13 @@ export default function App() {
     onOpen: () => setSseOk(true),
   });
 
-  const selectProcess = useCallback((id: string | null, slug: string) => {
+  const selectWorkflow = useCallback((id: string | null, slug: string) => {
     setWorkflowId(id);
-    setProcessSlug(slug);
+    setWorkflowSlug(slug);
   }, []);
 
   const openRunSheet = (id: string, slug: string, nextRunId?: string) => {
-    selectProcess(id, slug);
+    selectWorkflow(id, slug);
     setRunId(nextRunId ?? null);
     setPage("runs");
   };
@@ -219,7 +244,7 @@ export default function App() {
           Navbe
         </div>
         <p style={{ margin: "4px 0 8px", color: "#64748b", fontSize: 14 }}>
-          Control cockpit — runs, reports, settings
+          Control cockpit — runs, workflows, reports, connectors
         </p>
         <HealthBar sseOk={sseOk} />
         <LiveRunsStrip
@@ -231,8 +256,9 @@ export default function App() {
           {(
             [
               ["runs", "Runs"],
+              ["workflows", "Workflows"],
               ["reports", "Reports"],
-              ["settings", "Settings"],
+              ["connectors", "Connectors"],
             ] as const
           ).map(([key, label]) => (
             <button
@@ -248,22 +274,39 @@ export default function App() {
       </header>
 
       <main
-        style={{ padding: "1.5rem 2rem", maxWidth: 1100, margin: "0 auto" }}
+        style={{ padding: "1.5rem 2rem", maxWidth: 1200, margin: "0 auto" }}
       >
         {page === "runs" && (
           <RunsPage
-            processSlug={processSlug || null}
+            processSlug={workflowSlug || null}
             workflowId={workflowId}
             initialRunId={runId}
-            onSelectProcess={selectProcess}
+            onSelectProcess={selectWorkflow}
             onSelectRun={setRunId}
+          />
+        )}
+        {page === "workflows" && (
+          <WorkflowsPage
+            workflowId={workflowId}
+            onSelectWorkflow={selectWorkflow}
+            onOpenRuns={(id, slug) => {
+              selectWorkflow(id, slug);
+              setRunId(null);
+              setPage("runs");
+            }}
           />
         )}
         {page === "reports" && (
           <ReportsPage workflowId={workflowId} initialTemplateId={templateId} />
         )}
-        {page === "settings" && (
-          <SettingsPage
+        {page === "connectors" && (
+          <ConnectorsPage
+            tab={connectorsTab}
+            focusType={focusType}
+            onTabChange={(t) => {
+              setConnectorsTab(t);
+              if (t !== "destinations") setFocusType(null);
+            }}
             onOpenReports={(tplId) => {
               setTemplateId(tplId);
               setPage("reports");
