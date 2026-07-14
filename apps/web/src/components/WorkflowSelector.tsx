@@ -34,7 +34,9 @@ export function WorkflowSelector({ workflowId, onSelect }: Props) {
   }, [workflowId]);
 
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+    <label
+      style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}
+    >
       <span style={{ color: "#64748b" }}>Workflow</span>
       <select
         value={workflowId ?? ""}

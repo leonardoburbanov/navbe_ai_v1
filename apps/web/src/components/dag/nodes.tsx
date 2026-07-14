@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { statusColor } from "../../statusColors";
 
@@ -12,22 +13,24 @@ function DagNodeShell({
 }) {
   const status = data.status ?? "idle";
   const color = statusColor(status);
+  const running = status === "running";
   return (
     <div
+      className={cn(
+        "min-w-40 rounded-lg border-2 px-4 py-2 text-center transition-[box-shadow,border-color] duration-300",
+        running && "animate-[navbe-node-pulse_1.2s_ease-in-out_infinite]",
+      )}
       style={{
-        border: `2px solid ${color}`,
-        borderRadius: 8,
-        padding: "8px 16px",
+        borderColor: color,
         background,
-        minWidth: 160,
-        textAlign: "center",
-        boxShadow: status === "running" ? `0 0 12px ${color}` : "none",
-        transition: "box-shadow 0.4s",
+        boxShadow: running ? `0 0 12px ${color}` : "none",
       }}
     >
       <Handle type="target" position={Position.Top} />
-      <div style={{ fontWeight: 600, fontSize: 13 }}>{data.label}</div>
-      <div style={{ fontSize: 11, color }}>{status}</div>
+      <div className="text-[13px] font-semibold">{data.label}</div>
+      <div className="text-[11px]" style={{ color }}>
+        {status}
+      </div>
       <Handle type="source" position={Position.Bottom} />
     </div>
   );

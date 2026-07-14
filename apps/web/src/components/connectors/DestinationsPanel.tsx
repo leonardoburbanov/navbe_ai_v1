@@ -154,8 +154,8 @@ export function DestinationsPanel({ focusType, onOpenReports }: Props) {
       >
         <p style={{ fontSize: 13, color: "#64748b", marginTop: 0 }}>
           Type <code>email</code>
-          {emailDest ? ` · ${emailDest.name}` : " · not created yet"}
-          . Configure Resend (or SMTP via MCP) — secrets stay encrypted.
+          {emailDest ? ` · ${emailDest.name}` : " · not created yet"}. Configure
+          Resend (or SMTP via MCP) — secrets stay encrypted.
         </p>
         <p style={{ fontSize: 13, color: "#64748b" }}>
           Status:{" "}
@@ -172,7 +172,12 @@ export function DestinationsPanel({ focusType, onOpenReports }: Props) {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={status?.configured ? "(unchanged)" : "re_…"}
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: 8,
+            }}
           />
         </label>
         <label style={{ display: "block", fontSize: 13, marginBottom: 12 }}>
@@ -181,15 +186,18 @@ export function DestinationsPanel({ focusType, onOpenReports }: Props) {
             type="email"
             value={fromAddr}
             onChange={(e) => setFromAddr(e.target.value)}
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: 8,
+            }}
           />
         </label>
         <button
           type="button"
           disabled={busy || !apiKey.trim()}
-          onClick={() =>
-            run(() => configureResendApi(apiKey.trim(), fromAddr))
-          }
+          onClick={() => run(() => configureResendApi(apiKey.trim(), fromAddr))}
           style={{
             padding: "8px 12px",
             background: "#0f172a",
@@ -212,7 +220,12 @@ export function DestinationsPanel({ focusType, onOpenReports }: Props) {
           <select
             value={duckId}
             onChange={(e) => setDuckId(e.target.value)}
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: 8,
+            }}
           >
             {dataDests
               .filter((d) => d.type === "duckdb")
@@ -229,7 +242,12 @@ export function DestinationsPanel({ focusType, onOpenReports }: Props) {
             value={emailTo}
             onChange={(e) => setEmailTo(e.target.value)}
             placeholder="you@example.com"
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: 8,
+            }}
           />
         </label>
         <label style={{ display: "block", fontSize: 13, marginBottom: 12 }}>
@@ -237,7 +255,12 @@ export function DestinationsPanel({ focusType, onOpenReports }: Props) {
           <input
             value={cron}
             onChange={(e) => setCron(e.target.value)}
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: 8,
+            }}
           />
         </label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

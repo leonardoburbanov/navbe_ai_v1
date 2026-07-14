@@ -11,6 +11,16 @@ import {
 } from "../api/client";
 import { RunDetailSheet } from "../components/RunDetailSheet";
 import { StatusBadge } from "../components/StatusBadge";
+import { Button } from "../components/ui/button";
+import { Select } from "../components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 import { formatDurationMs } from "../lib/formatDuration";
 
 type Props = {
@@ -56,6 +66,8 @@ export function RunsPage({
     [processSlug],
   );
 
+  // Resolve slug once when deep-linked with workflow id only.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: avoid loop on onSelectProcess
   useEffect(() => {
     let cancelled = false;
     fetchProcesses()
@@ -74,8 +86,6 @@ export function RunsPage({
     return () => {
       cancelled = true;
     };
-    // Resolve slug once when deep-linked with workflow id only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid loop on onSelectProcess
   }, [workflowId, processSlug]);
 
   useEffect(() => {
@@ -96,6 +106,21 @@ export function RunsPage({
       .then((r) => setSheetRun(r))
       .catch(() => setSheetRun(null));
   }, [initialRunId, runs]);
+
+  const sheetRunId = sheetRun?.run_id ?? null;
+  const sheetRunning = sheetRun?.status === "running";
+
+  // Refresh in-flight sheet when live so animation + status stay current.
+  useEffect(() => {
+    if (!sheetRunId || !sheetRunning) return;
+    const id = window.setInterval(() => {
+      fetchRun(sheetRunId)
+        .then(setSheetRun)
+        .catch(() => undefined);
+      load(page);
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [sheetRunId, sheetRunning, load, page]);
 
   const openRun = (r: RunRow) => {
     setSheetRun(r);
@@ -136,19 +161,16 @@ export function RunsPage({
 
   return (
     <section>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <h2 style={{ marginTop: 0, marginBottom: 0 }}>Runs</h2>
-        <label style={{ fontSize: 13, color: "#64748b" }}>
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 className="m-0 text-xl font-semibold">Runs</h2>
+        <label
+          htmlFor="runs-workflow-filter"
+          className="text-sm text-muted-foreground"
+        >
           Filter by workflow{" "}
-          <select
+          <Select
+            id="runs-workflow-filter"
+            className="ml-1.5 inline-flex w-auto min-w-[200px]"
             value={workflowId ?? ""}
             onChange={(e) => {
               const id = e.target.value;
@@ -159,7 +181,6 @@ export function RunsPage({
               const p = processes.find((x) => x.workflow_id === id);
               onSelectProcess(id, p?.slug || p?.process_slug || "");
             }}
-            style={{ minWidth: 200, padding: "4px 8px", marginLeft: 6 }}
           >
             <option value="">All workflows</option>
             {processes.map((p) => (
@@ -167,158 +188,158 @@ export function RunsPage({
                 {p.slug || p.process_slug} — {p.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
       </div>
-      <p style={{ fontSize: 13, color: "#64748b", marginTop: 8 }}>
-        Click a run to open its DAG and report. Pause / Stop apply between
-        steps.
+      <p className="mt-2 text-sm text-muted-foreground">
+        Click a run to open its DAG and report. New runs open automatically.
+        Pause / Stop apply between steps.
       </p>
 
       {error && (
-        <p style={{ color: "#ef4444" }}>
+        <p className="text-destructive">
           {error}{" "}
-          <button type="button" onClick={() => load(page)}>
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            onClick={() => load(page)}
+          >
             Retry
-          </button>
+          </Button>
         </p>
       )}
-      {loading && !error && <p style={{ color: "#64748b" }}>Loading runs…</p>}
+      {loading && !error && (
+        <p className="text-muted-foreground">Loading runs…</p>
+      )}
       {!loading && !error && runs.length === 0 && (
-        <p style={{ color: "#64748b" }}>No runs yet.</p>
+        <p className="text-muted-foreground">No runs yet.</p>
       )}
 
       {runs.length > 0 && (
         <>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr
-                style={{ textAlign: "left", borderBottom: "1px solid #e2e8f0" }}
-              >
-                <th style={{ padding: 8 }}>Workflow</th>
-                <th style={{ padding: 8 }}>Run</th>
-                <th style={{ padding: 8 }}>Status</th>
-                <th style={{ padding: 8 }}>Started</th>
-                <th style={{ padding: 8 }}>Duration</th>
-                <th style={{ padding: 8 }}>Completed</th>
-                <th style={{ padding: 8 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Workflow</TableHead>
+                <TableHead>Run</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Started</TableHead>
+                <TableHead>Duration</TableHead>
+                <TableHead>Completed</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {runs.map((r) => (
-                <tr
+                <TableRow
                   key={r.run_id}
-                  style={{
-                    borderBottom: "1px solid #f1f5f9",
-                    cursor: "pointer",
-                    background:
-                      sheetRun?.run_id === r.run_id ? "#f8fafc" : undefined,
-                  }}
+                  data-state={
+                    sheetRun?.run_id === r.run_id ? "selected" : undefined
+                  }
+                  className="cursor-pointer"
                   onClick={() => openRun(r)}
                 >
-                  <td style={{ padding: 8, fontSize: 13 }}>
+                  <TableCell className="text-sm">
                     {r.slug ?? r.process_slug ?? "—"}
-                  </td>
-                  <td
-                    style={{
-                      padding: 8,
-                      fontFamily: "monospace",
-                      fontSize: 12,
-                    }}
-                  >
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
                     {r.run_id.slice(0, 8)}…
-                  </td>
-                  <td style={{ padding: 8 }}>
+                  </TableCell>
+                  <TableCell>
                     <StatusBadge
                       status={r.status}
                       pulse={r.status === "running"}
                     />
-                  </td>
-                  <td style={{ padding: 8, fontSize: 13 }}>{r.started_at}</td>
-                  <td style={{ padding: 8, fontSize: 13 }}>
+                  </TableCell>
+                  <TableCell className="text-sm">{r.started_at}</TableCell>
+                  <TableCell className="text-sm">
                     {formatDurationMs(r.duration_ms)}
-                  </td>
-                  <td style={{ padding: 8, fontSize: 13 }}>
+                  </TableCell>
+                  <TableCell className="text-sm">
                     {r.completed_at ?? "—"}
-                  </td>
-                  <td
-                    style={{ padding: 8 }}
+                  </TableCell>
+                  <TableCell
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
                     {r.status === "running" && (
-                      <>
-                        <button
+                      <span className="inline-flex gap-1">
+                        <Button
                           type="button"
+                          size="sm"
+                          variant="outline"
                           disabled={busyId === r.run_id}
                           onClick={() =>
                             act(r.run_id, () => pauseRunApi(r.run_id))
                           }
                         >
                           Pause
-                        </button>{" "}
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          size="sm"
+                          variant="destructive"
                           disabled={busyId === r.run_id}
                           onClick={() =>
                             act(r.run_id, () => stopRunApi(r.run_id))
                           }
                         >
                           Stop
-                        </button>
-                      </>
+                        </Button>
+                      </span>
                     )}
                     {r.status === "paused" && (
-                      <>
-                        <button
+                      <span className="inline-flex gap-1">
+                        <Button
                           type="button"
+                          size="sm"
+                          variant="outline"
                           disabled={busyId === r.run_id}
                           onClick={() =>
                             act(r.run_id, () => resumeRunApi(r.run_id))
                           }
                         >
                           Resume
-                        </button>{" "}
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          size="sm"
+                          variant="destructive"
                           disabled={busyId === r.run_id}
                           onClick={() =>
                             act(r.run_id, () => stopRunApi(r.run_id))
                           }
                         >
                           Stop
-                        </button>
-                      </>
+                        </Button>
+                      </span>
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              marginTop: 12,
-              fontSize: 13,
-              color: "#64748b",
-            }}
-          >
+            </TableBody>
+          </Table>
+          <div className="mt-3 flex justify-between text-sm text-muted-foreground">
             <span>
               {total != null
                 ? `${total} run${total === 1 ? "" : "s"} · page ${page}${totalPages ? ` of ${totalPages}` : ""}`
                 : `Page ${page}`}
             </span>
-            <span>
-              <button
+            <span className="inline-flex gap-2">
+              <Button
                 type="button"
+                size="sm"
+                variant="outline"
                 disabled={page <= 1 || loading}
                 onClick={() => load(page - 1)}
               >
                 Prev
-              </button>{" "}
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="sm"
+                variant="outline"
                 disabled={
                   loading ||
                   (totalPages != null
@@ -328,7 +349,7 @@ export function RunsPage({
                 onClick={() => load(page + 1)}
               >
                 Next
-              </button>
+              </Button>
             </span>
           </div>
         </>

@@ -7,6 +7,16 @@ import {
   fetchProcesses,
   queryWorkflowDestination,
 } from "../api/client";
+import { Button } from "../components/ui/button";
+import { Select } from "../components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 
 const PAGE_SIZE = 20;
 
@@ -108,31 +118,27 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
 
   return (
     <section>
-      <h2 style={{ marginTop: 0 }}>Reports</h2>
-      <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
+      <h2 className="mt-0 text-xl font-semibold">Reports</h2>
+      <p className="mt-0 text-sm text-muted-foreground">
         Run analysis templates against a workflow destination (same queries as
         MCP <code>list_analysis_templates</code>). For email delivery, open{" "}
         <strong>Connectors → Destinations</strong> (email destination).
       </p>
 
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 12,
-          alignItems: "flex-end",
-          marginBottom: 16,
-        }}
-      >
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 12, color: "#64748b" }}>Workflow</span>
-          <select
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <label
+          htmlFor="reports-workflow"
+          className="flex flex-col gap-1 text-xs text-muted-foreground"
+        >
+          Workflow
+          <Select
+            id="reports-workflow"
+            className="min-w-[220px]"
             value={selectedWorkflowId ?? ""}
             onChange={(e) => {
               setSelectedWorkflowId(e.target.value || null);
               setResult(null);
             }}
-            style={{ minWidth: 220, padding: "6px 8px" }}
           >
             {processes.length === 0 && (
               <option value="">No workflows yet</option>
@@ -142,18 +148,22 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
                 {p.slug || p.process_slug} — {p.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 12, color: "#64748b" }}>Template</span>
-          <select
+        <label
+          htmlFor="reports-template"
+          className="flex flex-col gap-1 text-xs text-muted-foreground"
+        >
+          Template
+          <Select
+            id="reports-template"
+            className="min-w-[280px]"
             value={selectedTemplateId ?? ""}
             onChange={(e) => {
               setSelectedTemplateId(e.target.value || null);
               setResult(null);
             }}
-            style={{ minWidth: 280, padding: "6px 8px" }}
           >
             {templates.length === 0 && (
               <option value="">No DuckDB templates</option>
@@ -163,29 +173,28 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
                 {t.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
-        <button
+        <Button
           type="button"
           onClick={() => runQuery(1)}
           disabled={loading || !selectedWorkflowId || !selectedTemplate}
-          style={{ padding: "6px 14px", fontWeight: 600 }}
         >
           {loading ? "Running…" : "Run template"}
-        </button>
+        </Button>
       </div>
 
       {selectedTemplate?.description && (
-        <p style={{ fontSize: 13, color: "#64748b", marginTop: 0 }}>
+        <p className="mt-0 text-sm text-muted-foreground">
           {selectedTemplate.description}
         </p>
       )}
 
-      {error && <p style={{ color: "#ef4444" }}>{error}</p>}
+      {error && <p className="text-destructive">{error}</p>}
 
       {result && result.total === 0 && (
-        <p style={{ color: "#64748b" }}>
+        <p className="text-muted-foreground">
           No rows. Re-run the workflow so <code>refresh_retailer_mart</code>{" "}
           populates the mart, then try again.
         </p>
@@ -193,79 +202,55 @@ export function ReportsPage({ workflowId, initialTemplateId }: Props) {
 
       {result && result.total > 0 && (
         <>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 8,
-              fontSize: 13,
-              color: "#64748b",
-            }}
-          >
+          <div className="mb-2 flex items-center justify-between text-sm text-muted-foreground">
             <span>
               {result.total} row{result.total === 1 ? "" : "s"} · page {page} of{" "}
               {totalPages}
             </span>
-            <span>
-              <button
+            <span className="inline-flex gap-2">
+              <Button
                 type="button"
+                size="sm"
+                variant="outline"
                 disabled={page <= 1 || loading}
                 onClick={() => runQuery(page - 1)}
               >
                 Prev
-              </button>{" "}
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="sm"
+                variant="outline"
                 disabled={page >= totalPages || loading}
                 onClick={() => runQuery(page + 1)}
               >
                 Next
-              </button>
+              </Button>
             </span>
           </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr
-                  style={{
-                    textAlign: "left",
-                    borderBottom: "1px solid #e2e8f0",
-                  }}
-                >
-                  {result.columns.map((col) => (
-                    <th key={col} style={{ padding: 8, fontSize: 13 }}>
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row) => {
-                  const rowKey = row.map((c) => String(c ?? "")).join("|");
-                  return (
-                    <tr
-                      key={rowKey}
-                      style={{ borderBottom: "1px solid #f1f5f9" }}
-                    >
-                      {result.columns.map((col, j) => (
-                        <td
-                          key={col}
-                          style={{
-                            padding: 8,
-                            fontSize: 13,
-                            fontFamily: "ui-monospace, monospace",
-                          }}
-                        >
-                          {row[j] == null ? "—" : String(row[j])}
-                        </td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {result.columns.map((col) => (
+                  <TableHead key={col}>{col}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {result.rows.map((row) => {
+                const rowKey = row.map((c) => String(c ?? "")).join("|");
+                return (
+                  <TableRow key={rowKey}>
+                    {result.columns.map((col, j) => (
+                      <TableCell key={col} className="font-mono text-xs">
+                        {row[j] == null ? "—" : String(row[j])}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         </>
       )}
     </section>

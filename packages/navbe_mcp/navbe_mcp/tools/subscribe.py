@@ -32,7 +32,10 @@ def _subscribe(
         subscriber_id=subscriber_id,
         registered=True,
         topics=topic_list,
-        next_step="call pull_events(subscriber_id) to receive events since this cursor",
+        next_step=(
+            "call pull_events(subscriber_id) to receive events since this cursor; "
+            "terminal run events include agent_message with the result summary"
+        ),
     ).model_dump()
 
 
@@ -41,7 +44,8 @@ register(
     fn=_subscribe,
     description=(
         "Register as a named subscriber to the event bus. Call once per agent session, "
-        "then poll with pull_events. Independent cursors per subscriber_id."
+        "then poll with pull_events. Independent cursors per subscriber_id. "
+        "Use subscriber_id='cursor' from Cursor. Terminal runs include agent_message."
     ),
     parameters={
         "subscriber_id": {

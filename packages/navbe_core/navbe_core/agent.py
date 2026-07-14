@@ -40,6 +40,86 @@ def _slug_payload(workflow: WorkflowModel) -> dict:
     return {"slug": s, "process_slug": s}
 
 
+def _format_duration_ms(duration_ms: int | None) -> str:
+    """Human duration for agent_message (ms or one-decimal seconds)."""
+    if duration_ms is None:
+        return "unknown duration"
+    if duration_ms < 1000:
+        return f"{duration_ms}ms"
+    return f"{duration_ms / 1000:.1f}s"
+
+
+def _summarize_run_output(output: dict | None) -> str | None:
+    """Pick a few high-signal metrics from run output for agents."""
+    if not output:
+        return None
+    bits: list[str] = []
+    for key in (
+        "traces_written",
+        "observations_written",
+        "traces_fetched",
+        "rows_out",
+        "rows_in",
+        "message",
+    ):
+        val = output.get(key)
+        if val is not None and val != "":
+            bits.append(f"{key}={val}")
+    if output.get("email_sent") is True:
+        bits.append("email sent")
+    elif output.get("preview_path"):
+        bits.append(f"preview={output['preview_path']}")
+    return ", ".join(bits) if bits else None
+
+
+def build_agent_message(
+    *,
+    status: str,
+    slug: str | None,
+    duration_ms: int | None = None,
+    output: dict | None = None,
+    error: str | None = None,
+    live_url: str | None = None,
+) -> str:
+    """Crisp one-line result for Cursor/agent via pull_events."""
+    name = slug or "workflow"
+    head = f"Workflow {name} {status}"
+    if duration_ms is not None:
+        head = f"{head} in {_format_duration_ms(duration_ms)}"
+    parts = [head]
+    summary = _summarize_run_output(output if isinstance(output, dict) else None)
+    if summary:
+        parts.append(summary)
+    if error:
+        parts.append(f"Error: {error}")
+    if live_url:
+        parts.append(f"Open: {live_url}")
+    return " — ".join(parts)
+
+
+def _with_agent_message(payload: dict, *, status: str | None = None) -> dict:
+    """Attach agent_message to a terminal run event payload."""
+    out = dict(payload)
+    st = status or str(out.get("status") or "finished")
+    # Map storage status → agent-friendly verb
+    verb = {
+        "completed": "succeeded",
+        "succeeded": "succeeded",
+        "failed": "failed",
+        "cancelled": "cancelled",
+        "canceled": "cancelled",
+    }.get(st, st)
+    out["agent_message"] = build_agent_message(
+        status=verb,
+        slug=out.get("slug") or out.get("process_slug"),
+        duration_ms=out.get("duration_ms") if isinstance(out.get("duration_ms"), int) else None,
+        output=out.get("output") if isinstance(out.get("output"), dict) else None,
+        error=out.get("error") if isinstance(out.get("error"), str) else None,
+        live_url=out.get("live_url") if isinstance(out.get("live_url"), str) else None,
+    )
+    return out
+
+
 def _process_topic(workflow: WorkflowModel) -> str:
     """Legacy topic (`process.{slug}`) — keep for subscribers this sprint."""
     return f"process.{_workflow_slug(workflow) or workflow.id}"
@@ -839,57 +919,78 @@ class WorkflowAgent:
                 events.publish(
                     f"run.{run.id}",
                     "run.preview.completed",
-                    {
-                        "workflow_id": workflow_id,
-                        "run_id": run.id,
-                        "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
-                        "status": "completed",
-                        "duration_ms": duration_ms,
-                        "live_url": live_url,
-                        "output": output,
-                    },
+                    _with_agent_message(
+                        {
+                            "workflow_id": workflow_id,
+                            "run_id": run.id,
+                            "slug": _workflow_slug(workflow),
+                            "process_slug": _workflow_slug(workflow),
+                            "status": "completed",
+                            "duration_ms": duration_ms,
+                            "live_url": live_url,
+                            "output": output,
+                        },
+                        status="succeeded",
+                    ),
                 )
             else:
                 self._advance_watermark(workflow_id, output)
-                _publish_workflow_topics(
-                    "run.succeeded",
+                done_payload = _with_agent_message(
                     {
                         "workflow_id": workflow_id,
                         "run_id": run.id,
-                        "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
+                        "slug": _workflow_slug(workflow),
+                        "process_slug": _workflow_slug(workflow),
                         "status": "completed",
                         "duration_ms": duration_ms,
                         "live_url": live_url,
                         "output": output,
                     },
-                    workflow,
+                    status="succeeded",
                 )
+                _publish_workflow_topics("run.succeeded", done_payload, workflow)
+                events.publish(f"run.{run.id}", "run.succeeded", done_payload)
+            agent_msg = build_agent_message(
+                status="succeeded",
+                slug=_workflow_slug(workflow),
+                duration_ms=duration_ms,
+                output=output if isinstance(output, dict) else None,
+                live_url=live_url,
+            )
             return {
                 "run_id": run.id,
                 "workflow_id": workflow_id,
-                "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
+                "slug": _workflow_slug(workflow),
+                "process_slug": _workflow_slug(workflow),
                 "status": "completed",
                 "duration_ms": duration_ms,
                 "steps": self.repo.serialize_run_steps(run.id),
                 "output": output,
                 "preview": is_preview,
                 "live_url": live_url,
-                "next_step": f"Open live_url to review the run: {live_url}",
+                "agent_message": agent_msg,
+                "next_step": (
+                    f"Open live_url: {live_url}. "
+                    "To get result pushes later: subscribe(subscriber_id='cursor') then "
+                    "pull_events — terminal events include agent_message."
+                ),
             }
         except Exception as e:
             self.repo.fail_run(run.id, str(e))
-            _publish_workflow_topics(
-                    "run.failed",
-                    {
+            fail_payload = _with_agent_message(
+                {
                     "workflow_id": workflow_id,
                     "run_id": run.id,
-                    "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
+                    "slug": _workflow_slug(workflow),
+                    "process_slug": _workflow_slug(workflow),
                     "status": "failed",
                     "live_url": live_url,
                     "error": str(e),
                 },
-                    workflow,
-                )
+                status="failed",
+            )
+            _publish_workflow_topics("run.failed", fail_payload, workflow)
+            events.publish(f"run.{run.id}", "run.failed", fail_payload)
             raise
         finally:
             if preview_path is not None and preview_path.exists():
@@ -940,44 +1041,53 @@ class WorkflowAgent:
             self._advance_watermark(workflow.id, output)
             run_done = self.repo.get_run(run_id)
             duration_ms = run_done.duration_ms if run_done else None
-            _publish_workflow_topics(
-                    "run.succeeded",
-                    {
+            done_payload = _with_agent_message(
+                {
                     "workflow_id": workflow.id,
                     "run_id": run_id,
-                    "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
+                    "slug": _workflow_slug(workflow),
+                    "process_slug": _workflow_slug(workflow),
                     "status": "completed",
                     "duration_ms": duration_ms,
                     "live_url": live_url,
                     "output": output,
                 },
-                    workflow,
-                )
+                status="succeeded",
+            )
+            _publish_workflow_topics("run.succeeded", done_payload, workflow)
+            events.publish(f"run.{run_id}", "run.succeeded", done_payload)
             return {
                 "run_id": run_id,
                 "workflow_id": workflow.id,
-                "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
+                "slug": _workflow_slug(workflow),
+                "process_slug": _workflow_slug(workflow),
                 "status": "completed",
                 "duration_ms": duration_ms,
                 "steps": self.repo.serialize_run_steps(run_id),
                 "output": output,
                 "live_url": live_url,
-                "next_step": f"Open live_url to review the run: {live_url}",
+                "agent_message": done_payload["agent_message"],
+                "next_step": (
+                    f"Open live_url: {live_url}. "
+                    "subscribe(subscriber_id='cursor') then pull_events for agent_message."
+                ),
             }
         except Exception as e:
             self.repo.fail_run(run_id, str(e))
-            _publish_workflow_topics(
-                    "run.failed",
-                    {
+            fail_payload = _with_agent_message(
+                {
                     "workflow_id": workflow.id,
                     "run_id": run_id,
-                    "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
+                    "slug": _workflow_slug(workflow),
+                    "process_slug": _workflow_slug(workflow),
                     "status": "failed",
                     "live_url": live_url,
                     "error": str(e),
                 },
-                    workflow,
-                )
+                status="failed",
+            )
+            _publish_workflow_topics("run.failed", fail_payload, workflow)
+            events.publish(f"run.{run_id}", "run.failed", fail_payload)
             raise
 
     def pause_run(self, run_id: str) -> dict:
@@ -1009,12 +1119,15 @@ class WorkflowAgent:
             events.publish(
                 f"run.{run_id}",
                 "run.cancelled",
-                {
-                    "workflow_id": run.workflow_id,
-                    "run_id": run_id,
-                    "status": "cancelled",
-                    "live_url": live_url,
-                },
+                _with_agent_message(
+                    {
+                        "workflow_id": run.workflow_id,
+                        "run_id": run_id,
+                        "status": "cancelled",
+                        "live_url": live_url,
+                    },
+                    status="cancelled",
+                ),
             )
             return {
                 "run_id": run_id,
@@ -1143,15 +1256,19 @@ class WorkflowAgent:
                         events.publish(
                             f"run.{run_id}",
                             "run.cancelled",
-                            {
-                                "workflow_id": workflow.id,
-                                "run_id": run_id,
-                                "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
-                                "status": "cancelled",
-                                "live_url": live_workflow_url(
-                                    workflow_id=workflow.id, run_id=run_id
-                                ),
-                            },
+                            _with_agent_message(
+                                {
+                                    "workflow_id": workflow.id,
+                                    "run_id": run_id,
+                                    "slug": _workflow_slug(workflow),
+                                    "process_slug": _workflow_slug(workflow),
+                                    "status": "cancelled",
+                                    "live_url": live_workflow_url(
+                                        workflow_id=workflow.id, run_id=run_id
+                                    ),
+                                },
+                                status="cancelled",
+                            ),
                         )
                         return state
                     if ctrl == "pause_requested":
@@ -1163,7 +1280,8 @@ class WorkflowAgent:
                             {
                                 "workflow_id": workflow.id,
                                 "run_id": run_id,
-                                "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
+                                "slug": _workflow_slug(workflow),
+                                "process_slug": _workflow_slug(workflow),
                                 "status": "paused",
                                 "live_url": live_workflow_url(
                                     workflow_id=workflow.id, run_id=run_id
@@ -1289,18 +1407,23 @@ class WorkflowAgent:
             output = self._execute(workflow, repo, run_id=run.id)
             repo.complete_run(run.id, output)
             self._advance_watermark(workflow_id, output, repo=repo)
-            _publish_workflow_topics(
-                    "run.succeeded",
-                    {
+            run_done = repo.get_run(run.id)
+            duration_ms = run_done.duration_ms if run_done else None
+            done_payload = _with_agent_message(
+                {
                     "workflow_id": workflow_id,
                     "run_id": run.id,
-                    "slug": _workflow_slug(workflow), "process_slug": _workflow_slug(workflow),
+                    "slug": _workflow_slug(workflow),
+                    "process_slug": _workflow_slug(workflow),
                     "status": "completed",
+                    "duration_ms": duration_ms,
                     "live_url": live_url,
                     "output": output,
                 },
-                    workflow,
-                )
+                status="succeeded",
+            )
+            _publish_workflow_topics("run.succeeded", done_payload, workflow)
+            events.publish(f"run.{run.id}", "run.succeeded", done_payload)
 
             if workflow.cron_expression and ScheduleParser.is_cron(workflow.cron_expression):
                 next_run = ScheduleParser.parse(workflow.cron_expression)
@@ -1322,18 +1445,20 @@ class WorkflowAgent:
             repo.fail_run(run.id, str(e))
             repo.update_workflow_status(workflow_id, "failed")
             workflow = repo.get_workflow(workflow_id, user_id=None)
-            fail_payload = {
-                "workflow_id": workflow_id,
-                "run_id": run.id,
-                "error": str(e),
-                "status": "failed",
-                "slug": _workflow_slug(workflow) if workflow else None,
-                "process_slug": _workflow_slug(workflow) if workflow else None,
-                "live_url": live_workflow_url(workflow_id=workflow_id, run_id=run.id),
-            }
+            fail_payload = _with_agent_message(
+                {
+                    "workflow_id": workflow_id,
+                    "run_id": run.id,
+                    "error": str(e),
+                    "status": "failed",
+                    "slug": _workflow_slug(workflow) if workflow else None,
+                    "process_slug": _workflow_slug(workflow) if workflow else None,
+                    "live_url": live_workflow_url(workflow_id=workflow_id, run_id=run.id),
+                },
+                status="failed",
+            )
             if workflow:
                 _publish_workflow_topics("run.failed", fail_payload, workflow)
-            else:
-                events.publish(f"run.{run.id}", "run.failed", fail_payload)
+            events.publish(f"run.{run.id}", "run.failed", fail_payload)
         finally:
             db.close()

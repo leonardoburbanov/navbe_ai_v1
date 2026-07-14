@@ -91,12 +91,25 @@ export function SourcesPanel() {
                   cursor: "pointer",
                 }}
                 onClick={() => setSelected(c.connector_id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelected(c.connector_id);
+                  }
+                }}
               >
                 <div style={{ fontWeight: 600 }}>{c.name}</div>
                 <div style={{ fontSize: 12, color: "#64748b" }}>
                   {c.type} · {c.status}
                 </div>
-                <div style={{ marginTop: 6, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    marginTop: 6,
+                    display: "flex",
+                    gap: 4,
+                    flexWrap: "wrap",
+                  }}
+                >
                   {(c.envs ?? []).map((e) => (
                     <span
                       key={e.env_key}
@@ -123,7 +136,12 @@ export function SourcesPanel() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              style={{ display: "block", width: "100%", padding: 6, marginTop: 2 }}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: 6,
+                marginTop: 2,
+              }}
             />
           </label>
           <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>
@@ -132,7 +150,12 @@ export function SourcesPanel() {
               value={host}
               onChange={(e) => setHost(e.target.value)}
               placeholder="https://cloud.langfuse.com"
-              style={{ display: "block", width: "100%", padding: 6, marginTop: 2 }}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: 6,
+                marginTop: 2,
+              }}
             />
           </label>
           <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>
@@ -140,7 +163,12 @@ export function SourcesPanel() {
             <input
               value={publicKey}
               onChange={(e) => setPublicKey(e.target.value)}
-              style={{ display: "block", width: "100%", padding: 6, marginTop: 2 }}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: 6,
+                marginTop: 2,
+              }}
             />
           </label>
           <label style={{ display: "block", fontSize: 13, marginBottom: 8 }}>
@@ -149,7 +177,12 @@ export function SourcesPanel() {
               type="password"
               value={secretKey}
               onChange={(e) => setSecretKey(e.target.value)}
-              style={{ display: "block", width: "100%", padding: 6, marginTop: 2 }}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: 6,
+                marginTop: 2,
+              }}
             />
           </label>
           <button
@@ -181,7 +214,9 @@ export function SourcesPanel() {
         <div>
           <h3 style={{ marginTop: 0 }}>Environments</h3>
           {!selectedRow && (
-            <p style={{ color: "#64748b", fontSize: 13 }}>Select a connector.</p>
+            <p style={{ color: "#64748b", fontSize: 13 }}>
+              Select a connector.
+            </p>
           )}
           {selectedRow && (
             <>
@@ -236,7 +271,10 @@ export function SourcesPanel() {
                         disabled={busy}
                         onClick={() =>
                           run(() =>
-                            testHubConnector(selectedRow.connector_id, e.env_key),
+                            testHubConnector(
+                              selectedRow.connector_id,
+                              e.env_key,
+                            ),
                           )
                         }
                       >
@@ -261,38 +299,66 @@ export function SourcesPanel() {
                 ))}
               </ul>
               <h4>Add / update environment</h4>
-              <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>
+              <label
+                style={{ display: "block", fontSize: 13, marginBottom: 6 }}
+              >
                 Env key
                 <input
                   value={envKey}
                   onChange={(e) => setEnvKey(e.target.value)}
                   placeholder="staging"
-                  style={{ display: "block", width: "100%", padding: 6, marginTop: 2 }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: 6,
+                    marginTop: 2,
+                  }}
                 />
               </label>
-              <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>
+              <label
+                style={{ display: "block", fontSize: 13, marginBottom: 6 }}
+              >
                 Host
                 <input
                   value={envHost}
                   onChange={(e) => setEnvHost(e.target.value)}
-                  style={{ display: "block", width: "100%", padding: 6, marginTop: 2 }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: 6,
+                    marginTop: 2,
+                  }}
                 />
               </label>
-              <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>
+              <label
+                style={{ display: "block", fontSize: 13, marginBottom: 6 }}
+              >
                 Public key
                 <input
                   value={envPk}
                   onChange={(e) => setEnvPk(e.target.value)}
-                  style={{ display: "block", width: "100%", padding: 6, marginTop: 2 }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: 6,
+                    marginTop: 2,
+                  }}
                 />
               </label>
-              <label style={{ display: "block", fontSize: 13, marginBottom: 8 }}>
+              <label
+                style={{ display: "block", fontSize: 13, marginBottom: 8 }}
+              >
                 Secret key
                 <input
                   type="password"
                   value={envSk}
                   onChange={(e) => setEnvSk(e.target.value)}
-                  style={{ display: "block", width: "100%", padding: 6, marginTop: 2 }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: 6,
+                    marginTop: 2,
+                  }}
                 />
               </label>
               <button

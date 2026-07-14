@@ -113,7 +113,30 @@ function NavbeFlowInner({
         selected: selectedStep === n.id,
       })),
     );
-  }, [nodeStatus, selectedStep, setNodes]);
+    // Animate edges into nodes that are currently running.
+    setEdges((prev) =>
+      prev.map((e) => {
+        const targetStatus: string = nodeStatus?.[e.target] ?? "idle";
+        const sourceStatus: string = nodeStatus?.[e.source] ?? "idle";
+        const isRunning = targetStatus === "running";
+        const flowing =
+          isRunning ||
+          (sourceStatus === "succeeded" && targetStatus === "idle");
+        return {
+          ...e,
+          animated: flowing,
+          style: isRunning
+            ? { stroke: "#3b82f6", strokeWidth: 2 }
+            : targetStatus === "succeeded"
+              ? { stroke: "#22c55e", strokeWidth: 1.5 }
+              : targetStatus === "failed"
+                ? { stroke: "#ef4444", strokeWidth: 1.5 }
+                : undefined,
+          className: isRunning ? "navbe-edge-animated" : undefined,
+        };
+      }),
+    );
+  }, [nodeStatus, selectedStep, setNodes, setEdges]);
 
   if (error) {
     return <p style={{ color: "#ef4444" }}>Failed to load graph: {error}</p>;

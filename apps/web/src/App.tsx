@@ -1,14 +1,11 @@
-import {
-  type CSSProperties,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchLiveRuns } from "./api/client";
 import { handleSsePayload, useSSE } from "./api/sse";
 import { HealthBar } from "./components/HealthBar";
 import { LiveRunsStrip } from "./components/LiveRunsStrip";
+import { Button } from "./components/ui/button";
+import { Separator } from "./components/ui/separator";
+import { cn } from "./lib/utils";
 import { ConnectorsPage } from "./pages/ConnectorsPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { RunsPage } from "./pages/RunsPage";
@@ -31,7 +28,6 @@ function readUrlState(): {
 } {
   const params = new URLSearchParams(window.location.search);
   const pageRaw = params.get("page") ?? "runs";
-  // Legacy settings → connectors destinations
   let page: Page;
   if (pageRaw === "settings") {
     page = "connectors";
@@ -70,16 +66,6 @@ function writeUrlState(
   const next = `${window.location.pathname}?${params.toString()}`;
   window.history.replaceState(null, "", next);
 }
-
-const navBtn = (active: boolean): CSSProperties => ({
-  padding: "6px 12px",
-  border: "none",
-  borderBottom: active ? "2px solid #0f172a" : "2px solid transparent",
-  background: "transparent",
-  cursor: "pointer",
-  fontWeight: active ? 700 : 500,
-  color: active ? "#0f172a" : "#64748b",
-});
 
 export default function App() {
   const initial = readUrlState();
@@ -163,6 +149,20 @@ export default function App() {
     return () => window.clearInterval(id);
   }, []);
 
+  const selectWorkflow = useCallback((id: string | null, slug: string) => {
+    setWorkflowId(id);
+    setWorkflowSlug(slug);
+  }, []);
+
+  const openRunSheet = useCallback(
+    (id: string, slug: string, nextRunId?: string) => {
+      selectWorkflow(id, slug);
+      setRunId(nextRunId ?? null);
+      setPage("runs");
+    },
+    [selectWorkflow],
+  );
+
   const onSse = useCallback(
     (e: MessageEvent) => {
       setSseOk(true);
@@ -188,6 +188,19 @@ export default function App() {
           },
           { patchStatus },
         );
+        // Auto-open live run sheet when a workflow is triggered.
+        if (
+          (event.type === "run.started" ||
+            event.type === "run.preview.started") &&
+          event.workflow_id &&
+          event.run_id
+        ) {
+          openRunSheet(
+            event.workflow_id,
+            event.slug ?? event.process_slug ?? "",
+            event.run_id,
+          );
+        }
       } catch {
         // ignore malformed keepalive / non-JSON
       }
@@ -202,6 +215,7 @@ export default function App() {
       liveFail,
       livePause,
       liveCancel,
+      openRunSheet,
     ],
   );
 
@@ -210,72 +224,50 @@ export default function App() {
     onOpen: () => setSseOk(true),
   });
 
-  const selectWorkflow = useCallback((id: string | null, slug: string) => {
-    setWorkflowId(id);
-    setWorkflowSlug(slug);
-  }, []);
-
-  const openRunSheet = (id: string, slug: string, nextRunId?: string) => {
-    selectWorkflow(id, slug);
-    setRunId(nextRunId ?? null);
-    setPage("runs");
-  };
-
   return (
-    <div
-      style={{
-        fontFamily: '"IBM Plex Sans", "Segoe UI", sans-serif',
-        minHeight: "100vh",
-        background: "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)",
-        color: "#0f172a",
-      }}
-    >
-      <header
-        style={{
-          padding: "1.25rem 2rem 0",
-          borderBottom: "1px solid #e2e8f0",
-          background: "rgba(255,255,255,0.85)",
-          backdropFilter: "blur(8px)",
-        }}
-      >
-        <div
-          style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em" }}
-        >
-          Navbe
+    <div className="min-h-svh bg-gradient-to-b from-background via-background to-slate-100 text-foreground">
+      <header className="sticky top-0 z-30 border-b bg-card/90 backdrop-blur-md">
+        <div className="mx-auto max-w-6xl px-6 pt-5">
+          <div className="text-3xl font-extrabold tracking-tight">Navbe</div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Control cockpit — runs, workflows, reports, connectors
+          </p>
+          <HealthBar sseOk={sseOk} />
+          <LiveRunsStrip
+            runs={liveRuns}
+            onOpen={(id, slug, rid) => openRunSheet(id, slug, rid)}
+            onDismiss={liveDismiss}
+          />
+          <nav className="flex flex-wrap gap-1 pb-0">
+            {(
+              [
+                ["runs", "Runs"],
+                ["workflows", "Workflows"],
+                ["reports", "Reports"],
+                ["connectors", "Connectors"],
+              ] as const
+            ).map(([key, label]) => (
+              <Button
+                key={key}
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  "rounded-none border-b-2 border-transparent px-3",
+                  page === key &&
+                    "border-primary font-semibold text-foreground",
+                )}
+                onClick={() => setPage(key)}
+              >
+                {label}
+              </Button>
+            ))}
+          </nav>
         </div>
-        <p style={{ margin: "4px 0 8px", color: "#64748b", fontSize: 14 }}>
-          Control cockpit — runs, workflows, reports, connectors
-        </p>
-        <HealthBar sseOk={sseOk} />
-        <LiveRunsStrip
-          runs={liveRuns}
-          onOpen={(id, slug, rid) => openRunSheet(id, slug, rid)}
-          onDismiss={liveDismiss}
-        />
-        <nav style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {(
-            [
-              ["runs", "Runs"],
-              ["workflows", "Workflows"],
-              ["reports", "Reports"],
-              ["connectors", "Connectors"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              style={navBtn(page === key)}
-              onClick={() => setPage(key)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+        <Separator />
       </header>
 
-      <main
-        style={{ padding: "1.5rem 2rem", maxWidth: 1200, margin: "0 auto" }}
-      >
+      <main className="mx-auto max-w-6xl px-6 py-6">
         {page === "runs" && (
           <RunsPage
             processSlug={workflowSlug || null}

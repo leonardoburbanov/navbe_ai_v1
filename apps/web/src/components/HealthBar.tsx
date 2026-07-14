@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import { fetchHealth } from "../api/client";
 
@@ -33,49 +34,35 @@ export function HealthBar({ sseOk }: Props) {
 
   const daemonLabel =
     online === null ? "checking…" : online ? "daemon online" : "daemon offline";
-  const daemonColor =
-    online === null ? "#94a3b8" : online ? "#16a34a" : "#dc2626";
+  const daemonOk = online === true;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 16,
-        alignItems: "center",
-        fontSize: 12,
-        color: "#64748b",
-        marginBottom: 8,
-      }}
-    >
-      <span>
+    <div className="mb-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">
         <span
-          style={{
-            display: "inline-block",
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: daemonColor,
-            marginRight: 6,
-          }}
+          className={cn(
+            "size-2 rounded-full",
+            online === null && "bg-slate-400",
+            daemonOk && "bg-green-600",
+            online === false && "bg-red-600",
+          )}
         />
         {daemonLabel}
       </span>
-      <span>
+      <span className="inline-flex items-center gap-1.5">
         <span
-          style={{
-            display: "inline-block",
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: sseOk ? "#16a34a" : "#f59e0b",
-            marginRight: 6,
-          }}
+          className={cn(
+            "size-2 rounded-full",
+            sseOk ? "bg-green-600" : "bg-amber-500",
+          )}
         />
         SSE {sseOk ? "connected" : "reconnecting"}
       </span>
       {online === false && (
-        <span style={{ color: "#dc2626" }}>
-          Start <code>uv run navbe daemon</code> on :7700
+        <span className="text-red-600">
+          Start{" "}
+          <code className="rounded bg-muted px-1">uv run navbe daemon</code> on
+          :7700
         </span>
       )}
     </div>

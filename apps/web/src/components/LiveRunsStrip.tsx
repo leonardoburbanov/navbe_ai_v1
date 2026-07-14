@@ -1,3 +1,6 @@
+import { cn } from "@/lib/utils";
+import { Button } from "./ui/button";
+
 type LiveRunRow = {
   runId: string;
   workflowId: string;
@@ -32,85 +35,60 @@ export function LiveRunsStrip({ runs, onOpen, onDismiss }: Props) {
   if (visible.length === 0) return null;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 8,
-        padding: "8px 0 12px",
-        alignItems: "center",
-      }}
-    >
-      <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>
-        Live
-      </span>
+    <div className="mb-3 flex flex-wrap items-center gap-2 py-2">
+      <span className="text-xs font-bold text-slate-600">Live</span>
       {visible.map((r) => {
         const pulse = r.status === "running";
         const color = statusColor(r.status);
         const label = r.processSlug || r.workflowId.slice(0, 8);
         return (
-          <button
+          <div
             key={r.runId}
-            type="button"
-            onClick={() => onOpen(r.workflowId, r.processSlug || "", r.runId)}
+            className={cn(
+              "inline-flex h-8 items-center gap-1 rounded-md border bg-background px-2 text-xs shadow-sm",
+              pulse && "animate-[navbe-pulse_1.4s_ease-in-out_infinite]",
+            )}
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              border: `1px solid ${color}`,
-              background: pulse ? "#eff6ff" : "#f8fafc",
-              color: "#0f172a",
-              borderRadius: 6,
-              padding: "4px 10px",
-              fontSize: 12,
-              cursor: "pointer",
-              boxShadow: pulse ? `0 0 0 2px ${color}33` : "none",
-              animation: pulse
-                ? "navbe-pulse 1.4s ease-in-out infinite"
-                : "none",
+              borderColor: color,
+              background: pulse ? "#eff6ff" : undefined,
+              boxShadow: pulse ? `0 0 0 2px ${color}33` : undefined,
             }}
           >
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: color,
-              }}
-            />
-            <strong>{label}</strong>
-            {r.status === "paused" && (
-              <span style={{ color: "#b45309" }}>paused</span>
-            )}
-            {r.step && <span style={{ color: "#64748b" }}>· {r.step}</span>}
-            <span style={{ color: "#94a3b8" }}>{ageLabel(r.startedAt)}</span>
+            <button
+              type="button"
+              className="inline-flex cursor-pointer items-center gap-1.5 bg-transparent"
+              onClick={() => onOpen(r.workflowId, r.processSlug || "", r.runId)}
+            >
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: color }}
+              />
+              <strong>{label}</strong>
+              {r.status === "paused" && (
+                <span className="text-amber-700">paused</span>
+              )}
+              {r.step && (
+                <span className="text-muted-foreground">· {r.step}</span>
+              )}
+              <span className="text-muted-foreground">
+                {ageLabel(r.startedAt)}
+              </span>
+            </button>
             {r.status !== "running" && r.status !== "paused" && (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
+                className="size-5 text-muted-foreground hover:text-foreground"
                 aria-label="Dismiss"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDismiss(r.runId);
-                }}
-                style={{
-                  marginLeft: 4,
-                  color: "#94a3b8",
-                  border: "none",
-                  background: "transparent",
-                  cursor: "pointer",
-                  padding: 0,
-                  fontSize: 14,
-                }}
+                onClick={() => onDismiss(r.runId)}
               >
                 ×
-              </button>
+              </Button>
             )}
-          </button>
+          </div>
         );
       })}
-      <style>
-        {"@keyframes navbe-pulse { 0%,100%{opacity:1} 50%{opacity:0.65} }"}
-      </style>
     </div>
   );
 }

@@ -1,6 +1,11 @@
-import type { CSSProperties } from "react";
 import { DestinationsPanel } from "../components/connectors/DestinationsPanel";
 import { SourcesPanel } from "../components/connectors/SourcesPanel";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../components/ui/tabs";
 
 type Tab = "sources" | "destinations";
 
@@ -11,16 +16,6 @@ type Props = {
   onOpenReports?: (templateId: string) => void;
 };
 
-const tabBtn = (active: boolean): CSSProperties => ({
-  padding: "8px 14px",
-  border: "none",
-  borderBottom: active ? "2px solid #0f172a" : "2px solid transparent",
-  background: "transparent",
-  cursor: "pointer",
-  fontWeight: active ? 700 : 500,
-  color: active ? "#0f172a" : "#64748b",
-});
-
 /** Connectors hub: Sources | Destinations (email is a destination type). */
 export function ConnectorsPage({
   tab,
@@ -30,33 +25,29 @@ export function ConnectorsPage({
 }: Props) {
   return (
     <section>
-      <h2 style={{ marginTop: 0 }}>Connectors</h2>
-      <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
+      <h2 className="mt-0 text-xl font-semibold">Connectors</h2>
+      <p className="mt-0 text-sm text-muted-foreground">
         Sources pull data; destinations store or deliver it (including email).
       </p>
-      <nav style={{ display: "flex", gap: 4, marginBottom: 16 }}>
-        <button
-          type="button"
-          style={tabBtn(tab === "sources")}
-          onClick={() => onTabChange("sources")}
-        >
-          Sources
-        </button>
-        <button
-          type="button"
-          style={tabBtn(tab === "destinations")}
-          onClick={() => onTabChange("destinations")}
-        >
-          Destinations
-        </button>
-      </nav>
-      {tab === "sources" && <SourcesPanel />}
-      {tab === "destinations" && (
-        <DestinationsPanel
-          focusType={focusType}
-          onOpenReports={onOpenReports}
-        />
-      )}
+      <Tabs
+        value={tab}
+        onValueChange={(v) => onTabChange(v as Tab)}
+        className="mt-4"
+      >
+        <TabsList>
+          <TabsTrigger value="sources">Sources</TabsTrigger>
+          <TabsTrigger value="destinations">Destinations</TabsTrigger>
+        </TabsList>
+        <TabsContent value="sources" className="mt-4">
+          <SourcesPanel />
+        </TabsContent>
+        <TabsContent value="destinations" className="mt-4">
+          <DestinationsPanel
+            focusType={focusType}
+            onOpenReports={onOpenReports}
+          />
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }

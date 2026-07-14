@@ -55,7 +55,7 @@ export function CatalogPage({ onOpenReports }: Props) {
     catalog.connectors.length === 0 && catalog.destinations.length === 0;
 
   return (
-      <section>
+    <section>
       <h3 style={{ marginTop: 0 }}>Integrations</h3>
       <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
         Connectors and destinations (create/rotate secrets via MCP; keys stay

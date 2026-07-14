@@ -345,11 +345,14 @@ export function upsertHubConnectorEnv(
     label?: string;
   },
 ): Promise<ConnectorHubRow> {
-  return fetch(`/api/hub/connectors/${connectorId}/envs/${encodeURIComponent(envKey)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  }).then(async (res) => {
+  return fetch(
+    `/api/hub/connectors/${connectorId}/envs/${encodeURIComponent(envKey)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  ).then(async (res) => {
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
     return res.json();
   });

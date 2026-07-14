@@ -5,8 +5,9 @@ import {
   fetchWorkflow,
   fetchWorkflows,
 } from "../api/client";
-import { NavbeFlow } from "../components/dag/NavbeFlow";
 import { StatusBadge } from "../components/StatusBadge";
+import { NavbeFlow } from "../components/dag/NavbeFlow";
+import { Button } from "../components/ui/button";
 
 type Props = {
   workflowId: string | null;
@@ -72,21 +73,10 @@ export function WorkflowsPage({
             marginBottom: 12,
           }}
         >
-          <h2 style={{ margin: 0, fontSize: 20 }}>Workflows</h2>
-          <button
-            type="button"
-            onClick={load}
-            style={{
-              border: "1px solid #cbd5e1",
-              background: "#fff",
-              borderRadius: 6,
-              padding: "4px 10px",
-              cursor: "pointer",
-              fontSize: 13,
-            }}
-          >
+          <h2 className="m-0 text-xl font-semibold">Workflows</h2>
+          <Button type="button" size="sm" variant="outline" onClick={load}>
             Refresh
-          </button>
+          </Button>
         </div>
 
         {error && (
@@ -120,8 +110,7 @@ export function WorkflowsPage({
           >
             <p style={{ marginTop: 0 }}>No workflows yet.</p>
             <p style={{ fontSize: 14 }}>
-              Create via MCP{" "}
-              <code>propose_workflow</code> then{" "}
+              Create via MCP <code>propose_workflow</code> then{" "}
               <code>confirm_workflow</code>, e.g. hint{" "}
               <code>&quot;monitor langfuse traces&quot;</code>.
             </p>
@@ -137,7 +126,13 @@ export function WorkflowsPage({
               overflow: "hidden",
             }}
           >
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: 13,
+              }}
+            >
               <thead>
                 <tr style={{ textAlign: "left", background: "#f8fafc" }}>
                   <th style={{ padding: "10px 12px" }}>Name / slug</th>
@@ -165,10 +160,18 @@ export function WorkflowsPage({
                         cursor: "pointer",
                       }}
                       onClick={() => onSelectWorkflow(w.workflow_id, slug)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectWorkflow(w.workflow_id, slug);
+                        }
+                      }}
                     >
                       <td style={{ padding: "10px 12px" }}>
                         <div style={{ fontWeight: 600 }}>{slug}</div>
-                        <div style={{ color: "#64748b", fontSize: 12 }}>{w.name}</div>
+                        <div style={{ color: "#64748b", fontSize: 12 }}>
+                          {w.name}
+                        </div>
                       </td>
                       <td style={{ padding: "10px 12px" }}>
                         <code style={{ fontSize: 12 }}>{trigger}</code>
@@ -186,7 +189,9 @@ export function WorkflowsPage({
                           <span style={{ color: "#94a3b8" }}>—</span>
                         )}
                       </td>
-                      <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
+                      <td
+                        style={{ padding: "10px 12px", whiteSpace: "nowrap" }}
+                      >
                         <button
                           type="button"
                           onClick={(e) => {
@@ -241,7 +246,9 @@ export function WorkflowsPage({
               <div style={{ fontWeight: 700, fontSize: 16 }}>
                 {detail?.slug || detail?.process_slug || workflowId.slice(0, 8)}
               </div>
-              <div style={{ color: "#64748b", fontSize: 13 }}>{detail?.name}</div>
+              <div style={{ color: "#64748b", fontSize: 13 }}>
+                {detail?.name}
+              </div>
             </div>
             <button
               type="button"
@@ -267,7 +274,9 @@ export function WorkflowsPage({
             </div>
             <div>
               <strong>Source:</strong>{" "}
-              {detail?.bindings?.connector_name || detail?.connector_name || "—"}
+              {detail?.bindings?.connector_name ||
+                detail?.connector_name ||
+                "—"}
             </div>
             <div>
               <strong>Destination:</strong>{" "}

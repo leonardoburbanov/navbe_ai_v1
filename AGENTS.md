@@ -584,7 +584,7 @@ Apply these on every change. If a design violates them, simplify before merging 
 | Run step | One LangGraph node within a run (`workflow_run_steps`); stores per-step `duration_ms` |
 | Slug | Friendly handle on a workflow (`langfuse_daily`); legacy alias: process_slug / “process” |
 | Process | Deprecated synonym of workflow slug — keep only in event/API aliases |
-| Event bus | Append-only pub/sub log shared by all agents |
+| Event bus | Append-only pub/sub log shared by all agents; terminal run events carry `agent_message` for Cursor via `pull_events` |
 | Subscriber | An AI agent or UI client with its own event cursor |
 | Schema version | Monotonic destination/control-plane DDL generation; migrations are additive-first |
 | Extras / payload | JSON column that absorbs unknown upstream fields without failing the load |
